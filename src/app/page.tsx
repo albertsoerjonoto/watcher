@@ -61,6 +61,21 @@ export default async function DashboardPage() {
     lastErrors.map((r) => [r.playlistId, r.error]),
   );
 
+  // Last 5 tracks per playlist, shown inline on the dashboard so the user
+  // can see what's in each watched playlist without clicking through.
+  const recentTracksPerPlaylist = await Promise.all(
+    playlists.map((p) =>
+      prisma.track.findMany({
+        where: { playlistId: p.id },
+        orderBy: { addedAt: "desc" },
+        take: 5,
+      }),
+    ),
+  );
+  const recentByPlaylist = new Map(
+    playlists.map((p, i) => [p.id, recentTracksPerPlaylist[i]]),
+  );
+
   // If any recent poll failed on token refresh, Spotify has revoked the
   // stored refresh token and nothing will work until the user re-auths.
   // Show a prominent banner with a one-tap re-auth link.
@@ -107,40 +122,66 @@ export default async function DashboardPage() {
             No playlists yet. Paste a Spotify playlist URL above.
           </li>
         )}
-        {playlists.map((p) => (
-          <li key={p.id} className="flex items-center gap-3 p-4">
-            <div className="flex-1">
-              <Link
-                href={`/playlists/${p.id}`}
-                className="font-medium hover:underline"
-              >
-                {p.name}
-              </Link>
-              <div className="text-xs text-neutral-400">
-                {p._count.tracks} tracks
-                {" · "}
-                last checked{" "}
-                {p.lastCheckedAt
-                  ? new Date(p.lastCheckedAt).toLocaleString()
-                  : "never"}
-                {p.status !== "active" && (
-                  <span className="ml-2 text-amber-400">({p.status})</span>
-                )}
-              </div>
-              {errorByPlaylist.get(p.id) && (
-                <div className="mt-1 break-all rounded bg-red-950/60 px-2 py-1 font-mono text-[10px] text-red-300">
-                  {errorByPlaylist.get(p.id)}
+        {playlists.map((p) => {
+          const recent = recentByPlaylist.get(p.id) ?? [];
+          return (
+            <li key={p.id} className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <Link
+                    href={`/playlists/${p.id}`}
+                    className="font-medium hover:underline"
+                  >
+                    {p.name}
+                  </Link>
+                  <div className="text-xs text-neutral-400">
+                    {p._count.tracks} tracks
+                    {" · "}
+                    last checked{" "}
+                    {p.lastCheckedAt
+                      ? new Date(p.lastCheckedAt).toLocaleString()
+                      : "never"}
+                    {p.status !== "active" && (
+                      <span className="ml-2 text-amber-400">({p.status})</span>
+                    )}
+                  </div>
+                  {errorByPlaylist.get(p.id) && (
+                    <div className="mt-1 break-all rounded bg-red-950/60 px-2 py-1 font-mono text-[10px] text-red-300">
+                      {errorByPlaylist.get(p.id)}
+                    </div>
+                  )}
                 </div>
+                {(weekByPlaylist.get(p.id) ?? 0) > 0 && (
+                  <span className="rounded-full bg-spotify/20 px-2 py-1 text-xs text-spotify">
+                    +{weekByPlaylist.get(p.id)} this week
+                  </span>
+                )}
+                <RetryButton playlistId={p.id} />
+              </div>
+              {recent.length > 0 && (
+                <ul className="mt-3 space-y-1 border-l border-neutral-800 pl-3 text-xs">
+                  {recent.map((t) => {
+                    const artists = JSON.parse(t.artists) as string[];
+                    return (
+                      <li key={t.id} className="flex gap-2">
+                        <span className="flex-1 truncate">
+                          <span className="text-neutral-200">{t.title}</span>
+                          <span className="text-neutral-500">
+                            {" — "}
+                            {artists.join(", ")}
+                          </span>
+                        </span>
+                        <time className="shrink-0 text-neutral-600">
+                          {new Date(t.addedAt).toLocaleDateString()}
+                        </time>
+                      </li>
+                    );
+                  })}
+                </ul>
               )}
-            </div>
-            {(weekByPlaylist.get(p.id) ?? 0) > 0 && (
-              <span className="rounded-full bg-spotify/20 px-2 py-1 text-xs text-spotify">
-                +{weekByPlaylist.get(p.id)} this week
-              </span>
-            )}
-            <RetryButton playlistId={p.id} />
-          </li>
-        ))}
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

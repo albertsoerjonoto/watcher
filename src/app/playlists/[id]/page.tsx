@@ -25,7 +25,6 @@ export default async function PlaylistPage({
       ...(since ? { firstSeenAt: { gte: since } } : {}),
     },
     orderBy: { addedAt: "desc" },
-    take: 500,
   });
 
   return (
