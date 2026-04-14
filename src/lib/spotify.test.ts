@@ -121,6 +121,35 @@ describe("extractTracksPage", () => {
     expect(page?.next).toBeNull();
   });
 
+  it("shape 3 with renamed `item` field per entry (April 2026)", () => {
+    // Observed in production: Spotify renamed both the outer `tracks`
+    // wrapper to `items`, AND the inner `track` field on each entry to
+    // `item`. Same structure, different field names.
+    const page = extractTracksPage({
+      name: "Afraid To Feel",
+      items: {
+        items: [
+          {
+            added_at: "2026-04-09T07:37:16Z",
+            added_by: { id: "albertsuryonoto" },
+            is_local: false,
+            item: {
+              id: "40SBS57su9xLiE1WqkXOVr",
+              name: "Afraid To Feel",
+              duration_ms: 177525,
+              album: { name: "Afraid To Feel" },
+              artists: [{ name: "LF SYSTEM" }],
+            },
+          },
+        ],
+        next: null,
+        total: 1,
+      },
+    });
+    expect(page?.items).toHaveLength(1);
+    expect(page?.total).toBe(1);
+  });
+
   it("shape 3 with pagination forwards next url", () => {
     const page = extractTracksPage({
       items: {

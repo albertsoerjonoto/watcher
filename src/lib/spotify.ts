@@ -144,17 +144,25 @@ export interface SpotifyPlaylistMeta {
   owner: { id: string; display_name?: string };
 }
 
+// A single item returned from Spotify inside a playlist's tracks paging.
+//
+// Spotify has quietly rotated the field names on this object multiple
+// times. The track payload can appear under either `track` (classic) or
+// `item` (current, observed April 2026 — coincident with the outer
+// `tracks` wrapper being renamed to `items`). We accept both.
+interface SpotifyTrackPayload {
+  id: string | null;
+  name: string;
+  duration_ms: number;
+  album?: { name: string };
+  artists: { name: string }[];
+}
 interface SpotifyPlaylistTrackItem {
   added_at: string;
   added_by: { id: string } | null;
   is_local: boolean;
-  track: {
-    id: string | null;
-    name: string;
-    duration_ms: number;
-    album?: { name: string };
-    artists: { name: string }[];
-  } | null;
+  track?: SpotifyTrackPayload | null;
+  item?: SpotifyTrackPayload | null;
 }
 
 interface SpotifyTracksPage {
@@ -225,13 +233,17 @@ function normalizeItems(
   out: TrackKeyed[],
 ) {
   for (const it of items) {
-    if (it.is_local || !it.track || !it.track.id) continue;
+    if (it.is_local) continue;
+    // Spotify renamed `track` to `item` on playlist-item objects — accept
+    // whichever field carries the track payload.
+    const payload: SpotifyTrackPayload | null | undefined = it.track ?? it.item;
+    if (!payload || !payload.id) continue;
     out.push({
-      spotifyTrackId: it.track.id,
-      title: it.track.name,
-      artists: it.track.artists.map((a) => a.name),
-      album: it.track.album?.name ?? null,
-      durationMs: it.track.duration_ms,
+      spotifyTrackId: payload.id,
+      title: payload.name,
+      artists: payload.artists.map((a) => a.name),
+      album: payload.album?.name ?? null,
+      durationMs: payload.duration_ms,
       addedAt: it.added_at,
       addedBySpotifyId: it.added_by?.id ?? null,
     });
@@ -300,50 +312,78 @@ export async function fetchAllPlaylistTracks(
   const out: TrackKeyed[] = [];
   let page: SpotifyTracksPage = initialPage;
   normalizeItems(page.items, out);
+  const total = page.total;
 
-  // Pagination. The first page usually holds up to 100 items; anything
-  // beyond that requires following page.next. That URL typically points
-  // at the dedicated /playlists/{id}/tracks endpoint, which 403s for
-  // some accounts — if so we return what we already have rather than
-  // failing the entire poll.
+  // Pagination. Spotify's behavior here is flaky — the dedicated
+  // `/playlists/{id}/tracks` endpoint returns 403 on some accounts, and
+  // the replacement `/playlists/{id}/items` endpoint sometimes returns a
+  // `next` URL that still points at offset=0 (which would infinite-loop
+  // if naively followed). We guard against both.
   //
-  // If there's no explicit `next` but we got exactly 100 items back,
-  // there *might* be more — try the /tracks endpoint with offset=100 as
-  // a best-effort fallback and silently stop on 403.
-  while (page.next) {
+  // Loop termination conditions (any of):
+  //   - no `next` url
+  //   - we've collected >= total items
+  //   - the next page has zero items
+  //   - we see the same offset twice (bogus `next` pointer)
+  //   - hard cap at 100 iterations so a pathological response can never
+  //     hang the poller
+  const seenOffsets = new Set<number>();
+
+  function parseOffset(url: string): number | null {
+    try {
+      const m = /[?&]offset=(\d+)/.exec(url);
+      return m ? Number(m[1]) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  let guard = 0;
+  while (page.next && out.length < total && guard < 100) {
+    guard++;
+    const offset = parseOffset(page.next);
+    if (offset !== null) {
+      if (seenOffsets.has(offset)) break;
+      seenOffsets.add(offset);
+    }
+    // Strip the API prefix so spotifyGet can prepend it again.
     const nextRel = page.next.replace(API, "");
     try {
       const resp = await spotifyGet<unknown>(user, nextRel);
       user = resp.user;
       const nextPage = extractTracksPage(resp.data);
-      if (!nextPage) break;
+      if (!nextPage || nextPage.items.length === 0) break;
       page = nextPage;
       normalizeItems(page.items, out);
     } catch (err) {
-      if (err instanceof SpotifyError && err.status === 403) break;
+      if (err instanceof SpotifyError && (err.status === 403 || err.status === 404)) break;
       throw err;
     }
   }
 
-  if (!page.next && out.length > 0 && out.length % 100 === 0) {
-    // Best-effort continuation for the flattened shape where `next`
-    // isn't provided but there might still be more tracks.
+  // Best-effort offset-based fallback for the case where `next` was
+  // missing but the page was exactly full. Try the `/items` endpoint
+  // first (current), then `/tracks` (legacy). Stop on any 403/404/empty.
+  if (out.length < total && out.length > 0 && out.length % 100 === 0) {
     let offset = out.length;
-    while (true) {
-      try {
-        const resp = await spotifyGet<unknown>(
-          user,
-          `/playlists/${playlistId}/tracks?offset=${offset}&limit=100`,
-        );
-        user = resp.user;
-        const extra = extractTracksPage(resp.data);
-        if (!extra || extra.items.length === 0) break;
-        normalizeItems(extra.items, out);
-        if (extra.items.length < 100) break;
-        offset += extra.items.length;
-      } catch (err) {
-        if (err instanceof SpotifyError && err.status === 403) break;
-        throw err;
+    const endpoints = [
+      (o: number) => `/playlists/${playlistId}/items?offset=${o}&limit=100`,
+      (o: number) => `/playlists/${playlistId}/tracks?offset=${o}&limit=100`,
+    ];
+    outer: for (const build of endpoints) {
+      while (out.length < total) {
+        try {
+          const resp = await spotifyGet<unknown>(user, build(offset));
+          user = resp.user;
+          const extra = extractTracksPage(resp.data);
+          if (!extra || extra.items.length === 0) break;
+          normalizeItems(extra.items, out);
+          offset += extra.items.length;
+          if (extra.items.length < 100) break outer;
+        } catch (err) {
+          if (err instanceof SpotifyError && (err.status === 403 || err.status === 404)) break;
+          throw err;
+        }
       }
     }
   }

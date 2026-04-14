@@ -2,6 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
 import { AddPlaylistForm } from "@/components/AddPlaylistForm";
+import { AutoRefresh } from "@/components/AutoRefresh";
 import { InstallHint } from "@/components/InstallHint";
 import { RetryButton } from "@/components/RetryButton";
 
@@ -26,6 +27,12 @@ export default async function DashboardPage() {
     );
   }
 
+  // Single-round-trip dashboard load. The dashboard page is marked
+  // force-dynamic and hits the DB on every navigation — the sequential
+  // chain of awaits was the dominant source of the "laggy" feel on
+  // Vercel (Postgres round-trip is ~40ms each and they compound on
+  // cold-start connections). Fan everything out in one Promise.all,
+  // then fetch per-playlist recent tracks in a second parallel batch.
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const playlists = await prisma.playlist.findMany({
     where: { userId: user.id },
@@ -34,43 +41,40 @@ export default async function DashboardPage() {
       _count: { select: { tracks: true } },
     },
   });
-  const weekCounts = await prisma.track.groupBy({
-    by: ["playlistId"],
-    _count: { _all: true },
-    where: {
-      playlistId: { in: playlists.map((p) => p.id) },
-      firstSeenAt: { gte: since },
-    },
-  });
+  const playlistIds = playlists.map((p) => p.id);
+  const [weekCounts, lastErrors, recentTracksPerPlaylist] = await Promise.all([
+    prisma.track.groupBy({
+      by: ["playlistId"],
+      _count: { _all: true },
+      where: {
+        playlistId: { in: playlistIds },
+        firstSeenAt: { gte: since },
+      },
+    }),
+    prisma.pollLog.findMany({
+      where: {
+        playlistId: { in: playlistIds },
+        error: { not: null },
+      },
+      orderBy: { startedAt: "desc" },
+      distinct: ["playlistId"],
+      select: { playlistId: true, error: true, startedAt: true },
+    }),
+    Promise.all(
+      playlists.map((p) =>
+        prisma.track.findMany({
+          where: { playlistId: p.id },
+          orderBy: { addedAt: "desc" },
+          take: 5,
+        }),
+      ),
+    ),
+  ]);
   const weekByPlaylist = new Map(
     weekCounts.map((r) => [r.playlistId, r._count._all]),
   );
-
-  // Surface the latest poll error per playlist so failures are debuggable
-  // from the dashboard itself (useful when Vercel logs aren't accessible).
-  const lastErrors = await prisma.pollLog.findMany({
-    where: {
-      playlistId: { in: playlists.map((p) => p.id) },
-      error: { not: null },
-    },
-    orderBy: { startedAt: "desc" },
-    distinct: ["playlistId"],
-    select: { playlistId: true, error: true, startedAt: true },
-  });
   const errorByPlaylist = new Map(
     lastErrors.map((r) => [r.playlistId, r.error]),
-  );
-
-  // Last 5 tracks per playlist, shown inline on the dashboard so the user
-  // can see what's in each watched playlist without clicking through.
-  const recentTracksPerPlaylist = await Promise.all(
-    playlists.map((p) =>
-      prisma.track.findMany({
-        where: { playlistId: p.id },
-        orderBy: { addedAt: "desc" },
-        take: 5,
-      }),
-    ),
   );
   const recentByPlaylist = new Map(
     playlists.map((p, i) => [p.id, recentTracksPerPlaylist[i]]),
@@ -103,15 +107,18 @@ export default async function DashboardPage() {
           </a>
         </div>
       )}
-      <div>
-        <h1 className="text-xl font-semibold">Watched playlists</h1>
-        <p className="text-sm text-neutral-400">
-          Signed in as {user.displayName ?? user.spotifyId}
-          {" · "}
-          <a href="/api/auth/login" className="underline hover:text-neutral-200">
-            re-auth
-          </a>
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold">Watched playlists</h1>
+          <p className="text-sm text-neutral-400">
+            Signed in as {user.displayName ?? user.spotifyId}
+            {" · "}
+            <a href="/api/auth/login" className="underline hover:text-neutral-200">
+              re-auth
+            </a>
+          </p>
+        </div>
+        <AutoRefresh />
       </div>
 
       <AddPlaylistForm />

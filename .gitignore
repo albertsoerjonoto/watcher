@@ -11,3 +11,4 @@ prisma/dev.db-journal
 coverage
 .vercel
 tsconfig.tsbuildinfo
+gstack
