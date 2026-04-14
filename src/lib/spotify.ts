@@ -170,39 +170,71 @@ export async function fetchPlaylistMeta(user: User, playlistId: string) {
   );
 }
 
+function normalizeItems(
+  items: SpotifyPlaylistTrackItem[],
+  out: TrackKeyed[],
+) {
+  for (const it of items) {
+    if (it.is_local || !it.track || !it.track.id) continue;
+    out.push({
+      spotifyTrackId: it.track.id,
+      title: it.track.name,
+      artists: it.track.artists.map((a) => a.name),
+      album: it.track.album?.name ?? null,
+      durationMs: it.track.duration_ms,
+      addedAt: it.added_at,
+      addedBySpotifyId: it.added_by?.id ?? null,
+    });
+  }
+}
+
 /**
  * Paginate through every track in a playlist, normalizing into our
  * TrackKeyed shape. Local tracks and null tracks (removed songs) are skipped.
+ *
+ * Implementation note: the dedicated `/playlists/{id}/tracks` endpoint
+ * returns 403 Forbidden for some Spotify apps/users (confirmed via
+ * /api/debug/probe — meta works, `/me/playlists` works, but every variant
+ * of /tracks 403s with no helpful message). The workaround is to fetch
+ * tracks via the playlist object itself (`/playlists/{id}?fields=tracks...`),
+ * which is a different code path and isn't affected. For playlists with
+ * more than 100 tracks we fall back to the dedicated endpoint for
+ * subsequent pages; if that 403s too we cap at what we have.
  */
 export async function fetchAllPlaylistTracks(
   userIn: User,
   playlistId: string,
 ): Promise<{ user: User; tracks: TrackKeyed[] }> {
-  let user = userIn;
+  const trackFields =
+    "items(added_at,added_by(id),is_local,track(id,name,duration_ms,album(name),artists(name))),next,total";
+  const firstPath =
+    `/playlists/${playlistId}?fields=${encodeURIComponent(`tracks(${trackFields})`)}`;
+
   const out: TrackKeyed[] = [];
-  let url: string | null =
-    `/playlists/${playlistId}/tracks?limit=100&fields=next,total,items(added_at,added_by(id),is_local,track(id,name,duration_ms,album(name),artists(name)))`;
-  while (url !== null) {
-    const page: { user: User; data: SpotifyTracksPage } =
-      await spotifyGet<SpotifyTracksPage>(user, url);
-    user = page.user;
-    const data: SpotifyTracksPage = page.data;
-    for (const it of data.items) {
-      if (it.is_local || !it.track || !it.track.id) continue;
-      out.push({
-        spotifyTrackId: it.track.id,
-        title: it.track.name,
-        artists: it.track.artists.map((a) => a.name),
-        album: it.track.album?.name ?? null,
-        durationMs: it.track.duration_ms,
-        addedAt: it.added_at,
-        addedBySpotifyId: it.added_by?.id ?? null,
-      });
+  const first = await spotifyGet<{ tracks: SpotifyTracksPage }>(
+    userIn,
+    firstPath,
+  );
+  let user = first.user;
+  let page: SpotifyTracksPage = first.data.tracks;
+  normalizeItems(page.items, out);
+
+  while (page.next) {
+    const nextRel = page.next.replace(API, "");
+    try {
+      const resp = await spotifyGet<SpotifyTracksPage>(user, nextRel);
+      user = resp.user;
+      page = resp.data;
+      normalizeItems(page.items, out);
+    } catch (err) {
+      // If the dedicated /tracks endpoint 403s for this account we can't
+      // paginate past the first 100 items. Return what we collected rather
+      // than marking the whole playlist unavailable.
+      if (err instanceof SpotifyError && err.status === 403) break;
+      throw err;
     }
-    if (!data.next) break;
-    // next is a full URL; strip the API prefix so spotifyGet can reuse.
-    url = data.next.replace(API, "");
   }
+
   return { user, tracks: out };
 }
 
