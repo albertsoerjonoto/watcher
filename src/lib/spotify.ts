@@ -163,30 +163,41 @@ interface SpotifyTracksPage {
   total: number;
 }
 
-// The playlist object's tracks may arrive in one of two shapes depending
-// on the account / API version:
+// The playlist object's tracks may arrive in one of three shapes
+// depending on the account / API version:
+//
 //   1. Standard: { tracks: { items, next, total, ... } }
-//   2. Flattened (observed on some accounts): { items, next?, total? }
-//      where items sits at the top level of the playlist object.
-// This helper normalizes both into a SpotifyTracksPage.
+//   2. Fully flattened: { items: [...], next?, total? } where items is
+//      a direct array at the top level.
+//   3. Renamed paging: { items: { items: [...], next, total, ... } }
+//      where the entire paging wrapper is at the top level under `items`
+//      instead of under `tracks`. This is what Spotify actually returns
+//      for the affected accounts — it looks like `tracks` was renamed
+//      to `items`.
+//
+// This helper normalizes all three into a SpotifyTracksPage.
+function tryPaging(obj: unknown): SpotifyTracksPage | null {
+  if (!obj || typeof obj !== "object") return null;
+  const o = obj as Record<string, unknown>;
+  if (!Array.isArray(o.items)) return null;
+  return {
+    items: o.items as SpotifyPlaylistTrackItem[],
+    next: (o.next as string | null | undefined) ?? null,
+    total: (o.total as number | undefined) ?? (o.items as unknown[]).length,
+  };
+}
+
 export function extractTracksPage(
   data: unknown,
 ): SpotifyTracksPage | null {
   if (!data || typeof data !== "object") return null;
   const d = data as Record<string, unknown>;
 
-  const nested = d.tracks;
-  if (nested && typeof nested === "object") {
-    const n = nested as Record<string, unknown>;
-    if (Array.isArray(n.items)) {
-      return {
-        items: n.items as SpotifyPlaylistTrackItem[],
-        next: (n.next as string | null | undefined) ?? null,
-        total: (n.total as number | undefined) ?? (n.items as unknown[]).length,
-      };
-    }
-  }
+  // Shape 1: nested under `tracks`
+  const nested = tryPaging(d.tracks);
+  if (nested) return nested;
 
+  // Shape 2: direct array at `items`
   if (Array.isArray(d.items)) {
     return {
       items: d.items as SpotifyPlaylistTrackItem[],
@@ -194,6 +205,10 @@ export function extractTracksPage(
       total: (d.total as number | undefined) ?? (d.items as unknown[]).length,
     };
   }
+
+  // Shape 3: paging wrapper at `items` (tracks renamed to items)
+  const renamed = tryPaging(d.items);
+  if (renamed) return renamed;
 
   return null;
 }
@@ -256,14 +271,29 @@ export async function fetchAllPlaylistTracks(
   let user = first.user;
   const initialPage = extractTracksPage(first.data);
   if (!initialPage) {
-    const keys =
+    // Maximally informative error: top-level keys, plus type and
+    // nested-keys of both `tracks` and `items` if present. This tells
+    // me exactly what shape Spotify returned so no more guessing.
+    const d =
       first.data && typeof first.data === "object"
-        ? Object.keys(first.data as Record<string, unknown>).join(",")
-        : "(not object)";
+        ? (first.data as Record<string, unknown>)
+        : {};
+    const keys = Object.keys(d).join(",");
+    const describe = (k: string): string => {
+      const v = d[k];
+      if (v === undefined) return `${k}=absent`;
+      if (v === null) return `${k}=null`;
+      if (Array.isArray(v)) return `${k}=array[${v.length}]`;
+      if (typeof v === "object") {
+        const inner = Object.keys(v as Record<string, unknown>).join(",");
+        return `${k}=object{${inner}}`;
+      }
+      return `${k}=${typeof v}`;
+    };
     throw new SpotifyError(
       0,
       first.data,
-      `Playlist response had no usable tracks field. Keys present: ${keys}`,
+      `no tracks field. top=[${keys}] ${describe("tracks")} ${describe("items")}`,
     );
   }
 

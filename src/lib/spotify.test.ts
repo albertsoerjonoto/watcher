@@ -90,4 +90,51 @@ describe("extractTracksPage", () => {
     expect(page?.next).toBeNull();
     expect(page?.total).toBe(0);
   });
+
+  it("extracts shape 3: paging wrapper renamed from tracks to items", () => {
+    // Observed on the affected Spotify account: the playlist object
+    // contains `items` at the top level but `items` is itself a paging
+    // object, not an array. Effectively Spotify renamed `tracks` to
+    // `items`.
+    const page = extractTracksPage({
+      collaborative: false,
+      name: "Afraid To Feel",
+      snapshot_id: "abc",
+      items: {
+        href: "https://api.spotify.com/...",
+        items: [
+          { added_at: "2024-01-01T00:00:00Z", track: { id: "t1" } },
+          { added_at: "2024-01-02T00:00:00Z", track: { id: "t2" } },
+          { added_at: "2024-01-03T00:00:00Z", track: { id: "t3" } },
+        ],
+        limit: 100,
+        next: null,
+        offset: 0,
+        previous: null,
+        total: 3,
+      },
+      type: "playlist",
+    });
+    expect(page).not.toBeNull();
+    expect(page?.items).toHaveLength(3);
+    expect(page?.total).toBe(3);
+    expect(page?.next).toBeNull();
+  });
+
+  it("shape 3 with pagination forwards next url", () => {
+    const page = extractTracksPage({
+      items: {
+        items: Array.from({ length: 100 }, (_, i) => ({
+          added_at: `2024-01-${String(i + 1).padStart(2, "0")}T00:00:00Z`,
+        })),
+        next: "https://api.spotify.com/v1/playlists/xyz/tracks?offset=100",
+        total: 247,
+      },
+    });
+    expect(page?.items).toHaveLength(100);
+    expect(page?.next).toBe(
+      "https://api.spotify.com/v1/playlists/xyz/tracks?offset=100",
+    );
+    expect(page?.total).toBe(247);
+  });
 });
