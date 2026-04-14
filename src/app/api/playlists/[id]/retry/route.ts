@@ -22,9 +22,12 @@ export async function POST(
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
 
+  // Clear snapshotId so the next poll always re-fetches tracks. Without
+  // this, a Retry on a playlist that was seeded with zero tracks would
+  // hit the snapshot short-circuit and do nothing.
   const reset = await prisma.playlist.update({
     where: { id: playlist.id },
-    data: { status: "active" },
+    data: { status: "active", snapshotId: null },
   });
 
   const result = await pollPlaylist(user, reset);

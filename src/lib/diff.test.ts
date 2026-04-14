@@ -48,6 +48,17 @@ describe("diffTracks", () => {
     expect(diffTracks(existing, incoming)).toEqual([]);
   });
 
+  it("treats no-fraction Spotify timestamps as equal to .000Z DB roundtrips", () => {
+    // Spotify returns "2026-04-14T07:42:08Z" (no millis); Postgres
+    // roundtrips through Date which serializes back as
+    // "2026-04-14T07:42:08.000Z". keyOf must normalize both to the same
+    // canonical form or every poll incorrectly tries to re-insert
+    // existing tracks and explodes the unique constraint.
+    const existing = [t("1", new Date("2026-04-14T07:42:08.000Z"))];
+    const incoming = [t("1", "2026-04-14T07:42:08Z")];
+    expect(diffTracks(existing, incoming)).toEqual([]);
+  });
+
   it("preserves incoming order", () => {
     const existing: TrackKeyed[] = [];
     const incoming = [

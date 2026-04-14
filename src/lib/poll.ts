@@ -51,7 +51,15 @@ export async function pollPlaylist(
     const meta = await fetchPlaylistMeta(user, playlist.spotifyId);
     user = meta.user;
 
+    // Snapshot short-circuit, but ONLY if we already have tracks in the
+    // DB. Otherwise we'd be permanently locked out of any playlist that
+    // was first seeded while a parser bug was returning zero tracks —
+    // the snapshot wouldn't change so we'd never try to re-fetch it.
+    const haveAnyTracks = await prisma.track.count({
+      where: { playlistId: playlist.id },
+    });
     if (
+      haveAnyTracks > 0 &&
       playlist.snapshotId &&
       playlist.snapshotId === meta.data.snapshot_id
     ) {
@@ -84,6 +92,10 @@ export async function pollPlaylist(
     const added = diffTracks(existing, incoming);
 
     // Persist new rows. `firstSeenAt` defaults to now().
+    // skipDuplicates is belt-and-suspenders next to the in-memory diff:
+    // even if our keyOf normalization ever drifts from the DB roundtrip
+    // again, a single stale row should not be allowed to nuke an entire
+    // batch via the unique constraint.
     if (added.length) {
       await prisma.track.createMany({
         data: added.map((t) => ({
@@ -97,6 +109,7 @@ export async function pollPlaylist(
             t.addedAt instanceof Date ? t.addedAt : new Date(t.addedAt),
           addedBySpotifyId: t.addedBySpotifyId ?? null,
         })),
+        skipDuplicates: true,
       });
     }
 
