@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
 import { AddPlaylistForm } from "@/components/AddPlaylistForm";
 import { InstallHint } from "@/components/InstallHint";
+import { RetryButton } from "@/components/RetryButton";
 
 export const dynamic = "force-dynamic";
 
@@ -137,6 +138,7 @@ export default async function DashboardPage() {
                 +{weekByPlaylist.get(p.id)} this week
               </span>
             )}
+            <RetryButton playlistId={p.id} />
           </li>
         ))}
       </ul>

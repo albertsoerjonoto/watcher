@@ -163,6 +163,41 @@ interface SpotifyTracksPage {
   total: number;
 }
 
+// The playlist object's tracks may arrive in one of two shapes depending
+// on the account / API version:
+//   1. Standard: { tracks: { items, next, total, ... } }
+//   2. Flattened (observed on some accounts): { items, next?, total? }
+//      where items sits at the top level of the playlist object.
+// This helper normalizes both into a SpotifyTracksPage.
+export function extractTracksPage(
+  data: unknown,
+): SpotifyTracksPage | null {
+  if (!data || typeof data !== "object") return null;
+  const d = data as Record<string, unknown>;
+
+  const nested = d.tracks;
+  if (nested && typeof nested === "object") {
+    const n = nested as Record<string, unknown>;
+    if (Array.isArray(n.items)) {
+      return {
+        items: n.items as SpotifyPlaylistTrackItem[],
+        next: (n.next as string | null | undefined) ?? null,
+        total: (n.total as number | undefined) ?? (n.items as unknown[]).length,
+      };
+    }
+  }
+
+  if (Array.isArray(d.items)) {
+    return {
+      items: d.items as SpotifyPlaylistTrackItem[],
+      next: (d.next as string | null | undefined) ?? null,
+      total: (d.total as number | undefined) ?? (d.items as unknown[]).length,
+    };
+  }
+
+  return null;
+}
+
 export async function fetchPlaylistMeta(user: User, playlistId: string) {
   return spotifyGet<SpotifyPlaylistMeta>(
     user,
@@ -213,15 +248,18 @@ export async function fetchAllPlaylistTracks(
   userIn: User,
   playlistId: string,
 ): Promise<{ user: User; tracks: TrackKeyed[] }> {
-  const first = await spotifyGet<{
-    tracks?: SpotifyTracksPage;
-    name?: string;
-  }>(userIn, `/playlists/${playlistId}`);
+  const first = await spotifyGet<unknown>(
+    userIn,
+    `/playlists/${playlistId}`,
+  );
 
   let user = first.user;
-  const tracksField = first.data.tracks;
-  if (!tracksField || !Array.isArray(tracksField.items)) {
-    const keys = first.data ? Object.keys(first.data).join(",") : "(empty)";
+  const initialPage = extractTracksPage(first.data);
+  if (!initialPage) {
+    const keys =
+      first.data && typeof first.data === "object"
+        ? Object.keys(first.data as Record<string, unknown>).join(",")
+        : "(not object)";
     throw new SpotifyError(
       0,
       first.data,
@@ -230,22 +268,53 @@ export async function fetchAllPlaylistTracks(
   }
 
   const out: TrackKeyed[] = [];
-  let page: SpotifyTracksPage = tracksField;
+  let page: SpotifyTracksPage = initialPage;
   normalizeItems(page.items, out);
 
+  // Pagination. The first page usually holds up to 100 items; anything
+  // beyond that requires following page.next. That URL typically points
+  // at the dedicated /playlists/{id}/tracks endpoint, which 403s for
+  // some accounts — if so we return what we already have rather than
+  // failing the entire poll.
+  //
+  // If there's no explicit `next` but we got exactly 100 items back,
+  // there *might* be more — try the /tracks endpoint with offset=100 as
+  // a best-effort fallback and silently stop on 403.
   while (page.next) {
     const nextRel = page.next.replace(API, "");
     try {
-      const resp = await spotifyGet<SpotifyTracksPage>(user, nextRel);
+      const resp = await spotifyGet<unknown>(user, nextRel);
       user = resp.user;
-      page = resp.data;
+      const nextPage = extractTracksPage(resp.data);
+      if (!nextPage) break;
+      page = nextPage;
       normalizeItems(page.items, out);
     } catch (err) {
-      // If the dedicated /tracks endpoint 403s for this account we can't
-      // paginate past the first 100 items. Return what we collected rather
-      // than marking the whole playlist unavailable.
       if (err instanceof SpotifyError && err.status === 403) break;
       throw err;
+    }
+  }
+
+  if (!page.next && out.length > 0 && out.length % 100 === 0) {
+    // Best-effort continuation for the flattened shape where `next`
+    // isn't provided but there might still be more tracks.
+    let offset = out.length;
+    while (true) {
+      try {
+        const resp = await spotifyGet<unknown>(
+          user,
+          `/playlists/${playlistId}/tracks?offset=${offset}&limit=100`,
+        );
+        user = resp.user;
+        const extra = extractTracksPage(resp.data);
+        if (!extra || extra.items.length === 0) break;
+        normalizeItems(extra.items, out);
+        if (extra.items.length < 100) break;
+        offset += extra.items.length;
+      } catch (err) {
+        if (err instanceof SpotifyError && err.status === 403) break;
+        throw err;
+      }
     }
   }
 
