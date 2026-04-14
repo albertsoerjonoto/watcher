@@ -101,6 +101,30 @@ export async function pollPlaylist(
     // even if our keyOf normalization ever drifts from the DB roundtrip
     // again, a single stale row should not be allowed to nuke an entire
     // batch via the unique constraint.
+    // Backfill albumImageUrl on tracks that were inserted before we
+    // started capturing it. updateMany is cheap when no rows match,
+    // and we only fire it for tracks where Spotify actually returned
+    // an image so a poll on a playlist where the column is already
+    // populated does ~zero work.
+    const incomingWithImage = incoming.filter((t) => t.albumImageUrl);
+    if (incomingWithImage.length) {
+      const missingCount = await prisma.track.count({
+        where: { playlistId: playlist.id, albumImageUrl: null },
+      });
+      if (missingCount > 0) {
+        for (const t of incomingWithImage) {
+          await prisma.track.updateMany({
+            where: {
+              playlistId: playlist.id,
+              spotifyTrackId: t.spotifyTrackId,
+              albumImageUrl: null,
+            },
+            data: { albumImageUrl: t.albumImageUrl },
+          });
+        }
+      }
+    }
+
     if (added.length) {
       await prisma.track.createMany({
         data: added.map((t) => ({
