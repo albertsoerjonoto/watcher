@@ -52,14 +52,19 @@ export async function pollPlaylist(
     user = meta.user;
 
     // Snapshot short-circuit, but ONLY if we already have tracks in the
-    // DB. Otherwise we'd be permanently locked out of any playlist that
-    // was first seeded while a parser bug was returning zero tracks —
-    // the snapshot wouldn't change so we'd never try to re-fetch it.
-    const haveAnyTracks = await prisma.track.count({
-      where: { playlistId: playlist.id },
-    });
+    // DB AND we don't have a backfill job to run. Without the backfill
+    // gate, tracks added before we started capturing albumImageUrl
+    // would never get their artwork because the snapshot would skip
+    // the track-fetch step every poll.
+    const [haveAnyTracks, missingImages] = await Promise.all([
+      prisma.track.count({ where: { playlistId: playlist.id } }),
+      prisma.track.count({
+        where: { playlistId: playlist.id, albumImageUrl: null },
+      }),
+    ]);
     if (
       haveAnyTracks > 0 &&
+      missingImages === 0 &&
       playlist.snapshotId &&
       playlist.snapshotId === meta.data.snapshot_id
     ) {
