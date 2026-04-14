@@ -38,6 +38,7 @@ model Playlist {
   notifyEnabled    Boolean   @default(true)
   sortOrder        Int       @default(0)
   lastCheckedAt    DateTime?
+  imageBackfillAt  DateTime?
   createdAt        DateTime  @default(now())
   tracks           Track[]
   pollLogs         PollLog[]

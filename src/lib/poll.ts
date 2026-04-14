@@ -52,20 +52,17 @@ export async function pollPlaylist(
     const meta = await fetchPlaylistMeta(user, playlist.spotifyId);
     user = meta.user;
 
-    // Snapshot short-circuit, but ONLY if we already have tracks in the
-    // DB AND we don't have a backfill job to run. Without the backfill
-    // gate, tracks added before we started capturing albumImageUrl
-    // would never get their artwork because the snapshot would skip
-    // the track-fetch step every poll.
-    const [haveAnyTracks, missingImages] = await Promise.all([
-      prisma.track.count({ where: { playlistId: playlist.id } }),
-      prisma.track.count({
-        where: { playlistId: playlist.id, albumImageUrl: null },
-      }),
-    ]);
+    // Snapshot short-circuit, but ONLY if we already have tracks in
+    // the DB AND we've already run the one-time albumImageUrl backfill.
+    // imageBackfillAt is set after the first full track fetch following
+    // the schema migration; without that gate, snapshot-unchanged
+    // playlists would never have their art filled in.
+    const haveAnyTracks = await prisma.track.count({
+      where: { playlistId: playlist.id },
+    });
     if (
       haveAnyTracks > 0 &&
-      missingImages === 0 &&
+      playlist.imageBackfillAt &&
       playlist.snapshotId &&
       playlist.snapshotId === meta.data.snapshot_id
     ) {
@@ -185,6 +182,7 @@ export async function pollPlaylist(
         ownerSpotifyId: meta.data.owner.id,
         ownerDisplayName: meta.data.owner.display_name ?? null,
         lastCheckedAt: new Date(),
+        imageBackfillAt: new Date(),
         status: "active",
       },
     });
