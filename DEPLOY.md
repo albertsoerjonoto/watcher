@@ -18,31 +18,22 @@ accounts are already logged in.
 1. Go to <https://supabase.com/dashboard> → **New project**.
 2. Pick a region close to you, set a **Database Password** (save it —
    you'll paste it in the next step), wait ~1 min for it to provision.
-3. Once it's up, go to **Project Settings → Database → Connection string**.
-4. Select mode = **Transaction (Pooler)** — port `6543`. Language = `URI`.
-   Do *not* pick Session mode; pooler mode is what works with serverless
-   functions.
+3. Once it's up, click **`Connect`** at the top of the project page.
+4. Pick **Session pooler** — port `5432`. Language = `URI`.
+   Do *not* use Transaction pooler (port 6543) — PgBouncer in transaction
+   mode breaks Prisma's `db push`/`migrate` because they need
+   session-level DDL. Session pooler works for both runtime and
+   migrations and is more than fine for a single-user app.
 5. The template looks like:
 
    ```
-   postgresql://postgres.<project-ref>:[YOUR-PASSWORD]@aws-0-<region>.pooler.supabase.com:6543/postgres
+   postgresql://postgres.<project-ref>:[YOUR-PASSWORD]@aws-1-<region>.pooler.supabase.com:5432/postgres
    ```
 
    Replace `[YOUR-PASSWORD]` with the password you set in step 2.
 
-6. **Append these query params** — required for Prisma + Supabase pooler,
-   without them you'll get `prepared statement does not exist` errors on
-   every request:
-
-   ```
-   ?pgbouncer=true&connection_limit=1
-   ```
-
-   Final string looks like:
-
-   ```
-   postgresql://postgres.abc:yourpass@aws-0-us-east-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1
-   ```
+   > **Tip:** pick a password that's only letters + digits. Special
+   > characters like `@ : / # ?` break URL parsing unless URL-encoded.
 
    Keep this tab open — you'll paste this into Vercel in a moment.
 
@@ -69,7 +60,7 @@ accounts are already logged in.
    | `SPOTIFY_REDIRECT_URI` | `https://<will-fill-after-deploy>/api/auth/callback` |
    | `APP_BASE_URL` | `https://<will-fill-after-deploy>` |
    | `SESSION_SECRET` | `T7T9YFabQiqjE8gDK0DC74ZUmdFg-IKKKMc-FInmVHA` |
-   | `DATABASE_URL` | *(Supabase pooler string from step 1, with `?pgbouncer=true&connection_limit=1` suffix)* |
+   | `DATABASE_URL` | *(Supabase session pooler string from step 1, port 5432, no query params)* |
    | `CRON_SECRET` | `1Xabh5Se7O5tFirfC6joj56u4OjYQY0GFD5wEOP9XFk` |
    | `VAPID_PUBLIC_KEY` | `BNHedM6mhEotKGY60tb_4qJZ5sbd_8NE0HKe0epaTsSwy1qgDUJDujr58TjmEpWJg1ZxlVur3LckvP9VniYJhlA` |
    | `VAPID_PRIVATE_KEY` | `cTu0SBHSkU1pS1eSIokMQzkhcrZGkGpn4SplDi_4FTE` |
@@ -160,15 +151,16 @@ a typo in the hostname — all count.
 
 **Build fails with `Error: P1001: Can't reach database server`**
 → The Supabase connection string is wrong. Most common causes:
-1. You used session mode (port 5432) instead of transaction pooler
-   (port 6543). Use the pooler.
-2. You forgot to replace `[YOUR-PASSWORD]` with your actual password.
-3. Your password contains URL-unsafe characters (`@`, `:`, `/`, `#`,
+1. You forgot to replace `[YOUR-PASSWORD]` with your actual password.
+2. Your password contains URL-unsafe characters (`@`, `:`, `/`, `#`,
    `?`). URL-encode them or set a password that's only alphanumerics.
+3. Supabase project was paused / deleted.
 
-**Runtime errors like `prepared statement "s0" already exists`**
-→ You forgot `?pgbouncer=true&connection_limit=1` on the connection
-string. Add it and redeploy.
+**Build hangs indefinitely on `prisma db push`**
+→ You used the Transaction pooler (port 6543). Prisma DDL doesn't work
+through PgBouncer transaction mode — it looks like a hang because the
+prepared statements never get a reply. Switch `DATABASE_URL` to the
+Session pooler (port 5432) with no query params, redeploy.
 
 **Build fails with `prisma db push` saying drift detected**
 → Someone (you? a previous deploy?) modified the DB schema out-of-band.
