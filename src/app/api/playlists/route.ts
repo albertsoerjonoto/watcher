@@ -36,6 +36,21 @@ export async function POST(request: Request) {
   }
 
   const { data: meta } = await fetchPlaylistMeta(user, spotifyId);
+
+  // Spotify's Nov 2024 policy change blocks dev-mode apps from reading
+  // tracks on Spotify-owned editorial/algorithmic playlists (owner id
+  // "spotify"). Metadata still resolves, but /tracks returns 403. Fail
+  // fast with a clear message rather than silently marking unavailable.
+  if (meta.owner.id === "spotify") {
+    return NextResponse.json(
+      {
+        error:
+          "This is a Spotify-owned editorial playlist. Since Nov 2024, Spotify blocks dev-mode apps from reading its tracks. Watch a user-owned playlist instead.",
+      },
+      { status: 422 },
+    );
+  }
+
   const playlist = await prisma.playlist.upsert({
     where: { userId_spotifyId: { userId: user.id, spotifyId } },
     update: { name: meta.name, ownerSpotifyId: meta.owner.id, status: "active" },

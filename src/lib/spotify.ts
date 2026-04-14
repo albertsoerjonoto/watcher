@@ -19,7 +19,18 @@ export class SpotifyError extends Error {
     public body: unknown,
     message?: string,
   ) {
-    super(message ?? `Spotify API error ${status}`);
+    // Include a short body preview in the message so the reason shows up
+    // in PollLog rows (which only persist `error: string`).
+    const preview =
+      typeof body === "string"
+        ? body.slice(0, 300)
+        : body
+          ? JSON.stringify(body).slice(0, 300)
+          : "";
+    super(
+      message ??
+        `Spotify API error ${status}${preview ? `: ${preview}` : ""}`,
+    );
   }
 }
 
