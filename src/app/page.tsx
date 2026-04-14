@@ -45,6 +45,21 @@ export default async function DashboardPage() {
     weekCounts.map((r) => [r.playlistId, r._count._all]),
   );
 
+  // Surface the latest poll error per playlist so failures are debuggable
+  // from the dashboard itself (useful when Vercel logs aren't accessible).
+  const lastErrors = await prisma.pollLog.findMany({
+    where: {
+      playlistId: { in: playlists.map((p) => p.id) },
+      error: { not: null },
+    },
+    orderBy: { startedAt: "desc" },
+    distinct: ["playlistId"],
+    select: { playlistId: true, error: true, startedAt: true },
+  });
+  const errorByPlaylist = new Map(
+    lastErrors.map((r) => [r.playlistId, r.error]),
+  );
+
   return (
     <section className="space-y-6">
       <InstallHint />
@@ -83,6 +98,11 @@ export default async function DashboardPage() {
                   <span className="ml-2 text-amber-400">({p.status})</span>
                 )}
               </div>
+              {errorByPlaylist.get(p.id) && (
+                <div className="mt-1 break-all rounded bg-red-950/60 px-2 py-1 font-mono text-[10px] text-red-300">
+                  {errorByPlaylist.get(p.id)}
+                </div>
+              )}
             </div>
             {(weekByPlaylist.get(p.id) ?? 0) > 0 && (
               <span className="rounded-full bg-spotify/20 px-2 py-1 text-xs text-spotify">
