@@ -1,0 +1,15 @@
+{
+  "owner": "179366",
+  "playlists": [
+    { "name": "Lalala", "spotifyId": "7b3K3nqunOP5Wm5wvLABmf" },
+    { "name": "Songs you might like", "spotifyId": "2AyxU8MhBdpjN5iS9ag4du" },
+    { "name": "Sedia Aku Sebelum Hujan", "spotifyId": "3OEu719YfX0jrQiVPgY31o" },
+    { "name": "TV", "spotifyId": "7dO8Lt4HIR3bZ5UkbyFPrY" },
+    { "name": "My Playlist #66", "spotifyId": "58dAusOvMGNqwvTwCLu7FF" },
+    {
+      "name": "Be With You",
+      "spotifyId": "58dAusOvMGNqwvTwCLu7FF",
+      "_note": "ID collides with 'My Playlist #66' in the seed. Replace with the correct Spotify ID before seeding."
+    }
+  ]
+}
