@@ -1,0 +1,80 @@
+// Diagnostic endpoint: hits Spotify with several request variants so we
+// can isolate why /tracks returns 403 while /me and playlist meta work.
+//
+// Usage: /api/debug/probe?id=<playlist spotify id or URL>
+//
+// Auth: must be signed in (uses stored user access token).
+
+import { NextResponse } from "next/server";
+import { getCurrentUser } from "@/lib/session";
+import { parsePlaylistId } from "@/lib/spotify";
+import type { User } from "@prisma/client";
+
+const API = "https://api.spotify.com/v1";
+
+async function probe(user: User, path: string) {
+  try {
+    const res = await fetch(`${API}${path}`, {
+      headers: { Authorization: `Bearer ${user.accessToken}` },
+    });
+    const text = await res.text();
+    return {
+      path,
+      status: res.status,
+      body: text.slice(0, 400),
+    };
+  } catch (err) {
+    return {
+      path,
+      status: 0,
+      body: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function GET(request: Request) {
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: "unauth" }, { status: 401 });
+
+  const url = new URL(request.url);
+  const idParam = url.searchParams.get("id") ?? "";
+  const playlistId = parsePlaylistId(idParam);
+  if (!playlistId) {
+    return NextResponse.json(
+      { error: "pass ?id=<playlist URL or spotify id>" },
+      { status: 400 },
+    );
+  }
+
+  // Fire probes sequentially so we preserve order in the response.
+  const probes = [
+    await probe(user, "/me"),
+    await probe(user, `/playlists/${playlistId}`),
+    await probe(
+      user,
+      `/playlists/${playlistId}?fields=id,name,snapshot_id,owner(id,display_name)`,
+    ),
+    await probe(user, `/playlists/${playlistId}/tracks?limit=5`),
+    await probe(
+      user,
+      `/playlists/${playlistId}/tracks?limit=5&fields=next,total,items(added_at,added_by(id),is_local,track(id,name))`,
+    ),
+    await probe(
+      user,
+      `/playlists/${playlistId}/tracks?limit=5&fields=next,total,items(added_at,track(id,name))`,
+    ),
+    await probe(user, "/me/playlists?limit=5"),
+  ];
+
+  return NextResponse.json({
+    user: {
+      id: user.id,
+      spotifyId: user.spotifyId,
+      displayName: user.displayName,
+      tokenExpiresAt: user.tokenExpiresAt,
+      tokenExpiresInMs: user.tokenExpiresAt.getTime() - Date.now(),
+    },
+    playlistId,
+    probes,
+  });
+}
