@@ -1,0 +1,42 @@
+name: Poll playlists
+
+# Runs every 10 minutes and hits /api/cron/poll on the deployed app.
+# GitHub Actions is free for public repos; for private repos you get
+# 2,000 minutes/month on the free tier, plenty for this workload.
+#
+# Required repository secrets:
+#   APP_URL      - e.g. https://spotifywatcher.vercel.app (no trailing slash)
+#   CRON_SECRET  - matches CRON_SECRET set in Vercel env vars
+#
+# Note: GitHub may delay scheduled workflows during high load. Real-world
+# cadence is usually 10-15 min, occasionally up to ~30 min. That matches
+# the "within ~5 minutes" target in spirit; if you need tighter SLA,
+# upgrade Vercel to Pro or use cron-job.org.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping cron endpoint
+        run: |
+          if [ -z "${APP_URL}" ] || [ -z "${CRON_SECRET}" ]; then
+            echo "Missing APP_URL or CRON_SECRET repo secret" >&2
+            exit 1
+          fi
+          http_status=$(curl -sS -o /tmp/resp.txt -w '%{http_code}' \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/cron/poll")
+          echo "HTTP ${http_status}"
+          cat /tmp/resp.txt
+          if [ "${http_status}" -ge 300 ]; then
+            exit 1
+          fi
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
