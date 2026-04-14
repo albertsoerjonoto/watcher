@@ -9,6 +9,7 @@
 //   5. Write a PollLog row
 //   6. Mark unavailable playlists (404/403) rather than crashing
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import {
   fetchAllPlaylistTracks,
@@ -117,20 +118,25 @@ export async function pollPlaylist(
         where: { playlistId: playlist.id, albumImageUrl: null },
       });
       if (missingCount > 0) {
-        // Parallelize — sequential awaits across 60+ tracks pushed the
-        // whole /api/refresh past Vercel's 60s function timeout.
-        await Promise.all(
-          incomingWithImage.map((t) =>
-            prisma.track.updateMany({
-              where: {
-                playlistId: playlist.id,
-                spotifyTrackId: t.spotifyTrackId,
-                albumImageUrl: null,
-              },
-              data: { albumImageUrl: t.albumImageUrl },
-            }),
-          ),
-        );
+        // One round-trip per playlist instead of one per track.
+        // Sequential awaits timed out at 60s on a 64-track playlist;
+        // a parallel Promise.all blew past the connection-pool limit
+        // (connection_limit=1 on the transaction pooler). A single
+        // SQL UPDATE keyed on a per-playlist VALUES list is O(1)
+        // round-trips and stays well inside the function budget.
+        const values = incomingWithImage
+          .map((t) => Prisma.sql`(${t.spotifyTrackId}, ${t.albumImageUrl})`)
+          .reduce((acc, cur, i) =>
+            i === 0 ? cur : Prisma.sql`${acc}, ${cur}`,
+          );
+        await prisma.$executeRaw`
+          UPDATE "Track" AS t
+          SET "albumImageUrl" = v.img
+          FROM (VALUES ${values}) AS v("sid", "img")
+          WHERE t."playlistId" = ${playlist.id}
+            AND t."spotifyTrackId" = v."sid"
+            AND t."albumImageUrl" IS NULL
+        `;
       }
     }
 
