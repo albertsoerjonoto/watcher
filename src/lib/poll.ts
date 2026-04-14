@@ -117,16 +117,20 @@ export async function pollPlaylist(
         where: { playlistId: playlist.id, albumImageUrl: null },
       });
       if (missingCount > 0) {
-        for (const t of incomingWithImage) {
-          await prisma.track.updateMany({
-            where: {
-              playlistId: playlist.id,
-              spotifyTrackId: t.spotifyTrackId,
-              albumImageUrl: null,
-            },
-            data: { albumImageUrl: t.albumImageUrl },
-          });
-        }
+        // Parallelize — sequential awaits across 60+ tracks pushed the
+        // whole /api/refresh past Vercel's 60s function timeout.
+        await Promise.all(
+          incomingWithImage.map((t) =>
+            prisma.track.updateMany({
+              where: {
+                playlistId: playlist.id,
+                spotifyTrackId: t.spotifyTrackId,
+                albumImageUrl: null,
+              },
+              data: { albumImageUrl: t.albumImageUrl },
+            }),
+          ),
+        );
       }
     }
 
