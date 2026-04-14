@@ -158,7 +158,7 @@ export async function pollPlaylist(
         playlistId: playlist.id,
         durationMs: Date.now() - startedAt,
         newTracks: 0,
-        error: msg.slice(0, 500),
+        error: msg.slice(0, 1500),
       },
     });
     return {

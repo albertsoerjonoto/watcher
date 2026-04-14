@@ -23,9 +23,9 @@ export class SpotifyError extends Error {
     // in PollLog rows (which only persist `error: string`).
     const preview =
       typeof body === "string"
-        ? body.slice(0, 300)
+        ? body.slice(0, 800)
         : body
-          ? JSON.stringify(body).slice(0, 300)
+          ? JSON.stringify(body).slice(0, 800)
           : "";
     super(
       message ??
@@ -193,30 +193,44 @@ function normalizeItems(
  * TrackKeyed shape. Local tracks and null tracks (removed songs) are skipped.
  *
  * Implementation note: the dedicated `/playlists/{id}/tracks` endpoint
- * returns 403 Forbidden for some Spotify apps/users (confirmed via
+ * returns 403 Forbidden for some Spotify accounts (confirmed via
  * /api/debug/probe — meta works, `/me/playlists` works, but every variant
- * of /tracks 403s with no helpful message). The workaround is to fetch
- * tracks via the playlist object itself (`/playlists/{id}?fields=tracks...`),
- * which is a different code path and isn't affected. For playlists with
- * more than 100 tracks we fall back to the dedicated endpoint for
- * subsequent pages; if that 403s too we cap at what we have.
+ * of /tracks 403s with no helpful message, including with `market=`,
+ * without `fields=`, and with minimal fields).
+ *
+ * Fetching via `/playlists/{id}?fields=tracks(...)` also doesn't work:
+ * Spotify returns 200 but silently strips the `tracks` field, returning
+ * just the whitelisted scalars.
+ *
+ * The approach that works: fetch `/playlists/{id}` with NO fields filter
+ * at all. The standard playlist response embeds the first 100 tracks
+ * inline in `.tracks.items`, and since we're not trying to filter that
+ * subtree Spotify doesn't strip it. For playlists with >100 tracks we
+ * paginate via `.tracks.next` which points back at the dedicated /tracks
+ * endpoint — if that 403s we return what we got rather than failing.
  */
 export async function fetchAllPlaylistTracks(
   userIn: User,
   playlistId: string,
 ): Promise<{ user: User; tracks: TrackKeyed[] }> {
-  const trackFields =
-    "items(added_at,added_by(id),is_local,track(id,name,duration_ms,album(name),artists(name))),next,total";
-  const firstPath =
-    `/playlists/${playlistId}?fields=${encodeURIComponent(`tracks(${trackFields})`)}`;
+  const first = await spotifyGet<{
+    tracks?: SpotifyTracksPage;
+    name?: string;
+  }>(userIn, `/playlists/${playlistId}`);
+
+  let user = first.user;
+  const tracksField = first.data.tracks;
+  if (!tracksField || !Array.isArray(tracksField.items)) {
+    const keys = first.data ? Object.keys(first.data).join(",") : "(empty)";
+    throw new SpotifyError(
+      0,
+      first.data,
+      `Playlist response had no usable tracks field. Keys present: ${keys}`,
+    );
+  }
 
   const out: TrackKeyed[] = [];
-  const first = await spotifyGet<{ tracks: SpotifyTracksPage }>(
-    userIn,
-    firstPath,
-  );
-  let user = first.user;
-  let page: SpotifyTracksPage = first.data.tracks;
+  let page: SpotifyTracksPage = tracksField;
   normalizeItems(page.items, out);
 
   while (page.next) {

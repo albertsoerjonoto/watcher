@@ -18,10 +18,22 @@ async function probe(user: User, path: string) {
       headers: { Authorization: `Bearer ${user.accessToken}` },
     });
     const text = await res.text();
+    // Include top-level keys for JSON responses so we can tell at a
+    // glance whether Spotify silently dropped a field (e.g. `tracks`).
+    let topKeys: string[] | undefined;
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        topKeys = Object.keys(parsed);
+      }
+    } catch {
+      // not JSON
+    }
     return {
       path,
       status: res.status,
-      body: text.slice(0, 400),
+      topKeys,
+      body: text.slice(0, 3000),
     };
   } catch (err) {
     return {
