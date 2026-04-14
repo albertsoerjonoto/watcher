@@ -60,13 +60,41 @@ export default async function DashboardPage() {
     lastErrors.map((r) => [r.playlistId, r.error]),
   );
 
+  // If any recent poll failed on token refresh, Spotify has revoked the
+  // stored refresh token and nothing will work until the user re-auths.
+  // Show a prominent banner with a one-tap re-auth link.
+  const needsReauth = Array.from(errorByPlaylist.values()).some((e) =>
+    e?.toLowerCase().includes("token refresh failed"),
+  );
+
   return (
     <section className="space-y-6">
       <InstallHint />
+      {needsReauth && (
+        <div className="rounded-lg border border-red-700 bg-red-950/50 p-4">
+          <p className="mb-2 text-sm font-semibold text-red-200">
+            Your Spotify session expired
+          </p>
+          <p className="mb-3 text-xs text-red-300">
+            Spotify rejected the stored refresh token. Sign in again to
+            continue — this will not delete your watched playlists.
+          </p>
+          <a
+            href="/api/auth/login"
+            className="inline-block rounded-full bg-spotify px-4 py-2 text-sm font-semibold text-black"
+          >
+            Sign in with Spotify again
+          </a>
+        </div>
+      )}
       <div>
         <h1 className="text-xl font-semibold">Watched playlists</h1>
         <p className="text-sm text-neutral-400">
           Signed in as {user.displayName ?? user.spotifyId}
+          {" · "}
+          <a href="/api/auth/login" className="underline hover:text-neutral-200">
+            re-auth
+          </a>
         </p>
       </div>
 

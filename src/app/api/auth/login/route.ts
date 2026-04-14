@@ -5,6 +5,7 @@ import {
   codeChallengeFromVerifier,
   randomState,
 } from "@/lib/pkce";
+import { SESSION_COOKIE_NAME } from "@/lib/session";
 
 const SCOPES = ["playlist-read-private", "playlist-read-collaborative"];
 
@@ -32,6 +33,11 @@ export async function GET() {
   };
   jar.set("spw_pkce", verifier, opts);
   jar.set("spw_state", state, opts);
+  // Always start a fresh session — if an old cookie pointed at a user
+  // whose refresh token is dead, we want to overwrite it after callback
+  // rather than keep serving errors. Deleting here is safe: the callback
+  // writes a new cookie on success.
+  jar.delete(SESSION_COOKIE_NAME);
 
   const url = new URL("https://accounts.spotify.com/authorize");
   url.searchParams.set("client_id", clientId);

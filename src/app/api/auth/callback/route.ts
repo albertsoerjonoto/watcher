@@ -63,6 +63,20 @@ export async function GET(request: Request) {
     },
   });
 
+  // Re-auth means any previously stuck playlists can be tried again.
+  // Clear stale error logs and reactivate unavailable playlists so the
+  // next poll (or the user re-clicking Add) can succeed cleanly.
+  await prisma.playlist.updateMany({
+    where: { userId: user.id, status: "unavailable" },
+    data: { status: "active" },
+  });
+  await prisma.pollLog.deleteMany({
+    where: {
+      error: { not: null },
+      playlist: { userId: user.id },
+    },
+  });
+
   const cookie = createSessionCookie(user.id);
   const res = NextResponse.redirect(new URL("/", request.url));
   res.cookies.set(cookie.name, cookie.value, {
