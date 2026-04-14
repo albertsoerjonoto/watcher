@@ -57,11 +57,13 @@ export default async function DashboardPage() {
           addedAt: { gte: since },
         },
       }),
+      // Most-recent pollLog per playlist (regardless of error). We
+      // filter to errors in JS so a clean poll *after* an errored
+      // poll clears the dashboard banner — the previous query
+      // returned the latest errored row even when newer successful
+      // runs existed, so old errors haunted the UI forever.
       prisma.pollLog.findMany({
-        where: {
-          playlistId: { in: playlistIds },
-          error: { not: null },
-        },
+        where: { playlistId: { in: playlistIds } },
         orderBy: { startedAt: "desc" },
         distinct: ["playlistId"],
         select: { playlistId: true, error: true, startedAt: true },
@@ -84,7 +86,7 @@ export default async function DashboardPage() {
     weekCounts.map((r) => [r.playlistId, r._count._all]),
   );
   const errorByPlaylist = new Map(
-    lastErrors.map((r) => [r.playlistId, r.error]),
+    lastErrors.filter((r) => r.error).map((r) => [r.playlistId, r.error]),
   );
   const recentByPlaylist = new Map(
     playlists.map((p, i) => [p.id, recentTracksPerPlaylist[i]]),
