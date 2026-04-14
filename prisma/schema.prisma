@@ -1,0 +1,89 @@
+// Spotify Playlist Watcher — Phase 1 schema
+// Single-user-per-row design; multi-user ready.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String             @id @default(cuid())
+  spotifyId        String             @unique
+  displayName      String?
+  accessToken      String
+  refreshToken     String
+  tokenExpiresAt   DateTime
+  createdAt        DateTime           @default(now())
+  playlists        Playlist[]
+  pushSubscriptions PushSubscription[]
+  deviceTokens     DeviceToken[] // reserved for Phase 2 (APNs)
+}
+
+model Playlist {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  spotifyId      String
+  name           String
+  ownerSpotifyId String?
+  snapshotId     String?
+  status         String    @default("active") // active | unavailable
+  notifyEnabled  Boolean   @default(true)
+  lastCheckedAt  DateTime?
+  createdAt      DateTime  @default(now())
+  tracks         Track[]
+  pollLogs       PollLog[]
+
+  @@unique([userId, spotifyId])
+  @@index([userId])
+}
+
+model Track {
+  id              String   @id @default(cuid())
+  playlistId      String
+  playlist        Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  spotifyTrackId  String
+  title           String
+  artists         String // JSON array of names
+  album           String?
+  durationMs      Int
+  addedAt         DateTime
+  addedBySpotifyId String?
+  firstSeenAt     DateTime @default(now())
+
+  @@unique([playlistId, spotifyTrackId, addedAt])
+  @@index([playlistId, firstSeenAt])
+}
+
+model PollLog {
+  id          String   @id @default(cuid())
+  playlistId  String?
+  playlist    Playlist? @relation(fields: [playlistId], references: [id], onDelete: SetNull)
+  startedAt   DateTime @default(now())
+  durationMs  Int
+  newTracks   Int      @default(0)
+  error       String?
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+}
+
+model DeviceToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform  String // "ios" | "android"
+  token     String   @unique
+  createdAt DateTime @default(now())
+}
