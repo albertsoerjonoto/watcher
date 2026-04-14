@@ -14,6 +14,7 @@ export interface TrackKeyed {
   title: string;
   artists: string[];
   album?: string | null;
+  albumImageUrl?: string | null;
   durationMs: number;
   addedBySpotifyId?: string | null;
 }

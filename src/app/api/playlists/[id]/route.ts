@@ -25,9 +25,12 @@ export async function PATCH(
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "unauth" }, { status: 401 });
   const body = await request.json();
-  const data: { notifyEnabled?: boolean } = {};
+  const data: { notifyEnabled?: boolean; sortOrder?: number } = {};
   if (typeof body.notifyEnabled === "boolean") {
     data.notifyEnabled = body.notifyEnabled;
+  }
+  if (typeof body.sortOrder === "number") {
+    data.sortOrder = body.sortOrder;
   }
   const playlist = await prisma.playlist.findFirst({
     where: { id: params.id, userId: user.id },

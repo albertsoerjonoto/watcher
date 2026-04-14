@@ -137,11 +137,17 @@ export async function spotifyGet<T = unknown>(
 }
 
 // --- Types we actually read from Spotify ---
+export interface SpotifyImage {
+  url: string;
+  width?: number | null;
+  height?: number | null;
+}
 export interface SpotifyPlaylistMeta {
   id: string;
   name: string;
   snapshot_id: string;
   owner: { id: string; display_name?: string };
+  images?: SpotifyImage[];
 }
 
 // A single item returned from Spotify inside a playlist's tracks paging.
@@ -154,7 +160,7 @@ interface SpotifyTrackPayload {
   id: string | null;
   name: string;
   duration_ms: number;
-  album?: { name: string };
+  album?: { name: string; images?: SpotifyImage[] };
   artists: { name: string }[];
 }
 interface SpotifyPlaylistTrackItem {
@@ -224,7 +230,7 @@ export function extractTracksPage(
 export async function fetchPlaylistMeta(user: User, playlistId: string) {
   return spotifyGet<SpotifyPlaylistMeta>(
     user,
-    `/playlists/${playlistId}?fields=id,name,snapshot_id,owner(id,display_name)`,
+    `/playlists/${playlistId}?fields=id,name,snapshot_id,owner(id,display_name),images`,
   );
 }
 
@@ -243,6 +249,7 @@ function normalizeItems(
       title: payload.name,
       artists: payload.artists.map((a) => a.name),
       album: payload.album?.name ?? null,
+      albumImageUrl: payload.album?.images?.[0]?.url ?? null,
       durationMs: payload.duration_ms,
       addedAt: it.added_at,
       addedBySpotifyId: it.added_by?.id ?? null,

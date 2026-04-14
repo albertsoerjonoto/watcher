@@ -25,19 +25,22 @@ model User {
 }
 
 model Playlist {
-  id             String    @id @default(cuid())
-  userId         String
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  spotifyId      String
-  name           String
-  ownerSpotifyId String?
-  snapshotId     String?
-  status         String    @default("active") // active | unavailable
-  notifyEnabled  Boolean   @default(true)
-  lastCheckedAt  DateTime?
-  createdAt      DateTime  @default(now())
-  tracks         Track[]
-  pollLogs       PollLog[]
+  id               String    @id @default(cuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  spotifyId        String
+  name             String
+  imageUrl         String?
+  ownerSpotifyId   String?
+  ownerDisplayName String?
+  snapshotId       String?
+  status           String    @default("active") // active | unavailable
+  notifyEnabled    Boolean   @default(true)
+  sortOrder        Int       @default(0)
+  lastCheckedAt    DateTime?
+  createdAt        DateTime  @default(now())
+  tracks           Track[]
+  pollLogs         PollLog[]
 
   @@unique([userId, spotifyId])
   @@index([userId])
@@ -51,6 +54,7 @@ model Track {
   title           String
   artists         String // JSON array of names
   album           String?
+  albumImageUrl   String?
   durationMs      Int
   addedAt         DateTime
   addedBySpotifyId String?

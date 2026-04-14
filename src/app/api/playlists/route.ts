@@ -51,14 +51,32 @@ export async function POST(request: Request) {
     );
   }
 
+  // Pick a sortOrder that puts the new playlist at the end so existing
+  // ordering is preserved. We do this on insert only — the dashboard's
+  // Move ↑/↓ buttons own all subsequent ordering changes.
+  const max = await prisma.playlist.aggregate({
+    where: { userId: user.id },
+    _max: { sortOrder: true },
+  });
+  const nextSortOrder = (max._max.sortOrder ?? 0) + 1;
+
   const playlist = await prisma.playlist.upsert({
     where: { userId_spotifyId: { userId: user.id, spotifyId } },
-    update: { name: meta.name, ownerSpotifyId: meta.owner.id, status: "active" },
+    update: {
+      name: meta.name,
+      ownerSpotifyId: meta.owner.id,
+      ownerDisplayName: meta.owner.display_name ?? null,
+      imageUrl: meta.images?.[0]?.url ?? null,
+      status: "active",
+    },
     create: {
       userId: user.id,
       spotifyId,
       name: meta.name,
       ownerSpotifyId: meta.owner.id,
+      ownerDisplayName: meta.owner.display_name ?? null,
+      imageUrl: meta.images?.[0]?.url ?? null,
+      sortOrder: nextSortOrder,
     },
   });
 

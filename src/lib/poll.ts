@@ -65,7 +65,12 @@ export async function pollPlaylist(
     ) {
       await prisma.playlist.update({
         where: { id: playlist.id },
-        data: { lastCheckedAt: new Date(), name: meta.data.name },
+        data: {
+          lastCheckedAt: new Date(),
+          name: meta.data.name,
+          imageUrl: meta.data.images?.[0]?.url ?? null,
+          ownerDisplayName: meta.data.owner.display_name ?? null,
+        },
       });
       await prisma.pollLog.create({
         data: {
@@ -104,6 +109,7 @@ export async function pollPlaylist(
           title: t.title,
           artists: JSON.stringify(t.artists),
           album: t.album ?? null,
+          albumImageUrl: t.albumImageUrl ?? null,
           durationMs: t.durationMs,
           addedAt:
             t.addedAt instanceof Date ? t.addedAt : new Date(t.addedAt),
@@ -136,7 +142,9 @@ export async function pollPlaylist(
       data: {
         snapshotId: meta.data.snapshot_id,
         name: meta.data.name,
+        imageUrl: meta.data.images?.[0]?.url ?? null,
         ownerSpotifyId: meta.data.owner.id,
+        ownerDisplayName: meta.data.owner.display_name ?? null,
         lastCheckedAt: new Date(),
         status: "active",
       },
