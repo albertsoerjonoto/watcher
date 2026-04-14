@@ -57,11 +57,19 @@ export async function GET(request: Request) {
     await probe(user, `/playlists/${playlistId}/tracks?limit=5`),
     await probe(
       user,
-      `/playlists/${playlistId}/tracks?limit=5&fields=next,total,items(added_at,added_by(id),is_local,track(id,name))`,
+      `/playlists/${playlistId}/tracks?limit=5&market=from_token`,
     ),
     await probe(
       user,
-      `/playlists/${playlistId}/tracks?limit=5&fields=next,total,items(added_at,track(id,name))`,
+      `/playlists/${playlistId}/tracks?limit=5&market=ID`,
+    ),
+    await probe(
+      user,
+      `/playlists/${playlistId}?fields=name,tracks.items(added_at,track(id,name))`,
+    ),
+    await probe(
+      user,
+      `/playlists/${playlistId}?fields=name,tracks(items(added_at,track(id,name)),next,total)`,
     ),
     await probe(user, "/me/playlists?limit=5"),
   ];
