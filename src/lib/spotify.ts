@@ -121,8 +121,14 @@ export async function spotifyGet<T = unknown>(
     }
     if (res.status === 429) {
       const retry = Number(res.headers.get("retry-after") ?? "1");
-      if (attempt > 4) throw new SpotifyError(429, await res.text());
-      await sleep(Math.min(retry, 30) * 1000);
+      // Cap total back-off at ~5s and bail after 1 retry. The previous
+      // 4×30s budget meant a single rate-limited meta fetch could hang
+      // a request for two minutes — longer than Vercel's function
+      // timeout — and the user's Add button would spin forever. Fail
+      // fast and let the caller (AutoRefresh / retry endpoint) try
+      // again on its own cadence.
+      if (attempt > 1) throw new SpotifyError(429, await res.text());
+      await sleep(Math.min(retry, 5) * 1000);
       continue;
     }
     if (res.status >= 500 && attempt < 3) {

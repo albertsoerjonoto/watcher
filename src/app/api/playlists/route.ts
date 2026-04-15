@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
-import { fetchPlaylistMeta, parsePlaylistId } from "@/lib/spotify";
+import { parsePlaylistId } from "@/lib/spotify";
 
 export async function GET() {
   const user = await getCurrentUser();
@@ -34,22 +34,6 @@ export async function POST(request: Request) {
     );
   }
 
-  const { data: meta } = await fetchPlaylistMeta(user, spotifyId);
-
-  // Spotify's Nov 2024 policy change blocks dev-mode apps from reading
-  // tracks on Spotify-owned editorial/algorithmic playlists (owner id
-  // "spotify"). Metadata still resolves, but /tracks returns 403. Fail
-  // fast with a clear message rather than silently marking unavailable.
-  if (meta.owner.id === "spotify") {
-    return NextResponse.json(
-      {
-        error:
-          "This is a Spotify-owned editorial playlist. Since Nov 2024, Spotify blocks dev-mode apps from reading its tracks. Watch a user-owned playlist instead.",
-      },
-      { status: 422 },
-    );
-  }
-
   // Pick a sortOrder that puts the new playlist at the end so existing
   // ordering is preserved. We do this on insert only — the dashboard's
   // Move ↑/↓ buttons own all subsequent ordering changes.
@@ -59,22 +43,23 @@ export async function POST(request: Request) {
   });
   const nextSortOrder = (max._max.sortOrder ?? 0) + 1;
 
+  // No Spotify calls on the hot path. A previous version fetched
+  // playlist meta here to pre-populate name/owner and guard against
+  // Spotify-owned editorial playlists, but Spotify was rate-limiting
+  // the meta endpoint (up to 2 minutes of Retry-After backoff) and
+  // the whole Add button hung on it. Insert a stub row keyed by the
+  // parsed spotifyId and let the background retry hydrate meta and
+  // tracks. Editorial-playlist detection moves to pollPlaylist which
+  // already marks 403s as "unavailable".
   const playlist = await prisma.playlist.upsert({
     where: { userId_spotifyId: { userId: user.id, spotifyId } },
-    update: {
-      name: meta.name,
-      ownerSpotifyId: meta.owner.id,
-      ownerDisplayName: meta.owner.display_name ?? null,
-      imageUrl: meta.images?.[0]?.url ?? null,
-      status: "active",
-    },
+    update: { status: "active" },
     create: {
       userId: user.id,
       spotifyId,
-      name: meta.name,
-      ownerSpotifyId: meta.owner.id,
-      ownerDisplayName: meta.owner.display_name ?? null,
-      imageUrl: meta.images?.[0]?.url ?? null,
+      // Use the Spotify id as a placeholder name; pollPlaylist
+      // overwrites it with meta.name on the first successful fetch.
+      name: spotifyId,
       sortOrder: nextSortOrder,
     },
   });
