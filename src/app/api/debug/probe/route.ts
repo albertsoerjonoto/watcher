@@ -84,6 +84,34 @@ export async function GET(request: Request) {
     await probe(user, `/playlists/${playlistId}?fields=items(added_at,track(id,name))`),
     await probe(user, `/playlists/${playlistId}?fields=items`),
     await probe(user, `/playlists/${playlistId}?additional_types=track,episode`),
+    // Probe open.spotify.com anon-token endpoint from Vercel IP (blocked from some regions).
+    await (async () => {
+      try {
+        const r = await fetch(
+          "https://open.spotify.com/get_access_token?reason=transport&productType=embed",
+          { headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json" } },
+        );
+        const text = await r.text();
+        return { path: "[anon-token]", status: r.status, body: text.slice(0, 800) };
+      } catch (err) {
+        return { path: "[anon-token]", status: 0, body: String(err) };
+      }
+    })(),
+    // Probe the embed page from Vercel.
+    await (async () => {
+      try {
+        const r = await fetch(
+          `https://open.spotify.com/embed/playlist/${playlistId}`,
+          { headers: { "User-Agent": "Mozilla/5.0" } },
+        );
+        const text = await r.text();
+        const hasNextData = text.includes("__NEXT_DATA__");
+        const trackIdCount = (text.match(/spotify:track:[A-Za-z0-9]{22}/g) ?? []).length;
+        return { path: "[embed]", status: r.status, body: `nextData=${hasNextData} trackIds=${trackIdCount} size=${text.length}` };
+      } catch (err) {
+        return { path: "[embed]", status: 0, body: String(err) };
+      }
+    })(),
     await probe(
       user,
       `/playlists/${playlistId}?fields=name,tracks.items(added_at,track(id,name))`,
