@@ -196,10 +196,13 @@ export default async function DashboardPage() {
       )}
 
       {Array.from(groups.entries()).map(([groupKey, { ownerName, rows }]) => {
-        // Index per group is what the up/down buttons act on, but the
-        // sortOrder swap also crosses group boundaries because reorder
-        // operates on the global sorted list. Compute neighbors from the
-        // global `playlists` array so the swap is always correct.
+        // Reorder operates WITHIN a group, not across the global list.
+        // Previously we swapped sortOrder with the global neighbor, which
+        // worked at the DB level but was invisible on screen because the
+        // dashboard renders playlists grouped by owner. Clicking ↑ on a
+        // row whose global neighbor lived in a different group just
+        // silently swapped sortOrder numbers without any visual change,
+        // producing the "slow and buggy" reorder the user reported.
         return (
           <div key={groupKey} className="space-y-2">
             <h2 className="px-1 text-xs uppercase tracking-wide text-neutral-500">
@@ -208,13 +211,10 @@ export default async function DashboardPage() {
             <ul className="divide-y divide-neutral-800 rounded-lg border border-neutral-800">
               {rows.map((p) => {
                 const recent = recentByPlaylist.get(p.id) ?? [];
-                const globalIdx = playlists.findIndex((x) => x.id === p.id);
-                const prevId =
-                  globalIdx > 0 ? playlists[globalIdx - 1].id : null;
+                const groupIdx = rows.findIndex((x) => x.id === p.id);
+                const prevId = groupIdx > 0 ? rows[groupIdx - 1].id : null;
                 const nextId =
-                  globalIdx < playlists.length - 1
-                    ? playlists[globalIdx + 1].id
-                    : null;
+                  groupIdx < rows.length - 1 ? rows[groupIdx + 1].id : null;
                 return (
                   <li key={p.id} className="p-4">
                     <div className="flex items-start gap-3">
@@ -262,8 +262,8 @@ export default async function DashboardPage() {
                       <PlaylistActionsClient
                         playlistId={p.id}
                         playlistName={p.name}
-                        isFirst={globalIdx === 0}
-                        isLast={globalIdx === playlists.length - 1}
+                        isFirst={groupIdx === 0}
+                        isLast={groupIdx === rows.length - 1}
                         prevId={prevId}
                         nextId={nextId}
                       />
