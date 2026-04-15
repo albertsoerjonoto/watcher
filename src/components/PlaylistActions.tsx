@@ -1,15 +1,22 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 // Per-row action cluster on the dashboard: move up, move down, delete.
-// Reorder is implemented as a swap with the neighbor's sortOrder; the
-// server PATCH endpoint only stores the new sortOrder for one playlist
-// at a time, so we fire two PATCHes in parallel.
+// Reorder is a server-side renumber (see /api/playlists/reorder); we
+// just hit the endpoint and then force a real reload so the dashboard
+// re-renders with the new ordering.
 //
 // We pre-render disabled states for the boundary rows (top/bottom)
 // so the user gets immediate feedback that the buttons are inert.
+//
+// Why `location.reload()` instead of `router.refresh()`:
+// `router.refresh()` inside `startTransition` was silently not
+// re-rendering after a successful POST on production (Next 14.2.5) —
+// the API returned 200, the DB was updated, a hard reload showed the
+// new order, but the in-app click looked like a no-op because the
+// Router Cache wasn't invalidated in time. A hard reload costs ~300ms
+// on force-dynamic pages and is unambiguously correct.
 export function PlaylistActions({
   playlistId,
   playlistName,
@@ -25,16 +32,14 @@ export function PlaylistActions({
   onMove: (direction: "up" | "down") => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
-  const router = useRouter();
-  const [, startTransition] = useTransition();
   const [busy, setBusy] = useState(false);
 
   async function withBusy(fn: () => Promise<void>) {
     setBusy(true);
     try {
       await fn();
-      startTransition(() => router.refresh());
-    } finally {
+      window.location.reload();
+    } catch {
       setBusy(false);
     }
   }
