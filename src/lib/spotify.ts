@@ -348,20 +348,32 @@ export async function fetchAllPlaylistTracks(
     }
 
     if (!page) {
-      // All fallbacks failed. If metadata explicitly said total=0, this is
-      // a legitimate empty playlist.
+      // All Web API fallbacks failed. If metadata explicitly said total=0,
+      // this is a legitimate empty playlist.
       if (metaTotal === 0) {
         return { user, tracks: out };
       }
-      // Otherwise Spotify is blocking us. Tell the user plainly.
-      const statusStr = fallbackStatuses.length
-        ? fallbackStatuses.join(",")
-        : "none";
-      throw new SpotifyError(
-        403,
-        first.data,
-        `Spotify blocked track access for this playlist. The main /playlists/{id} response omits the tracks field, and /items + /tracks both returned ${statusStr}. This is a Spotify restriction on the playlist (sometimes applied to 3rd-party playlists) and cannot be worked around with the current user scopes.`,
-      );
+      // Otherwise Spotify has blocked every Web API path to the tracks.
+      // Last resort: parse the server-rendered JSON from the public embed
+      // page (open.spotify.com/embed/playlist/{id}), which bypasses the
+      // Web API entirely. The embed page caps at ~100 tracks and lacks
+      // `addedAt` + album metadata — we enrich the album data via the
+      // `/v1/tracks?ids=` catalog endpoint (which works on user tokens
+      // even when playlist-track endpoints don't) and use a synthetic
+      // stable addedAt = epoch so diffs are idempotent.
+      const embedResult = await fetchEmbedTracks(user, playlistId);
+      user = embedResult.user;
+      if (embedResult.tracks.length === 0) {
+        const statusStr = fallbackStatuses.length
+          ? fallbackStatuses.join(",")
+          : "none";
+        throw new SpotifyError(
+          403,
+          first.data,
+          `Spotify blocked track access for this playlist. Web API /items + /tracks returned ${statusStr}, and the embed fallback returned no tracks either.`,
+        );
+      }
+      return { user, tracks: embedResult.tracks };
     }
     total = Math.max(total, metaTotal ?? 0);
   }
@@ -440,6 +452,162 @@ export async function fetchAllPlaylistTracks(
     }
   }
 
+  return { user, tracks: out };
+}
+
+// --- Embed-based fallback for playlists where Spotify blocks the Web
+// API's track endpoints (403 on /tracks and /items, `tracks` field
+// silently stripped from /playlists/{id}). The public embed page at
+// https://open.spotify.com/embed/playlist/{id} server-renders a
+// `__NEXT_DATA__` script tag containing up to 100 trackList entries.
+// Fields available: uri, title, subtitle (artists), duration, audioPreview.
+// Missing: album name, album image, addedAt, addedBy. We enrich album
+// data via `/v1/tracks?ids=` and synthesize a stable addedAt of epoch.
+
+interface EmbedTrack {
+  uri?: string;
+  title?: string;
+  subtitle?: string;
+  duration?: number;
+}
+
+async function fetchEmbedTracks(
+  userIn: User,
+  playlistId: string,
+): Promise<{ user: User; tracks: TrackKeyed[] }> {
+  const res = await fetch(
+    `https://open.spotify.com/embed/playlist/${playlistId}`,
+    {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+    },
+  );
+  if (!res.ok) {
+    throw new SpotifyError(
+      res.status,
+      await res.text(),
+      `Embed fetch failed with ${res.status}`,
+    );
+  }
+  const html = await res.text();
+  const m = html.match(
+    /<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/,
+  );
+  if (!m) {
+    throw new SpotifyError(0, html.slice(0, 400), "Embed HTML has no __NEXT_DATA__");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(m[1]);
+  } catch (err) {
+    throw new SpotifyError(
+      0,
+      m[1].slice(0, 400),
+      `Embed __NEXT_DATA__ parse failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  const entity =
+    ((parsed as Record<string, unknown>)?.props as Record<string, unknown>)
+      ?.pageProps &&
+    (
+      ((parsed as Record<string, unknown>).props as Record<string, unknown>)
+        .pageProps as Record<string, unknown>
+    )?.state &&
+    (
+      (
+        ((parsed as Record<string, unknown>).props as Record<string, unknown>)
+          .pageProps as Record<string, unknown>
+      ).state as Record<string, unknown>
+    )?.data &&
+    (
+      (
+        (
+          ((parsed as Record<string, unknown>).props as Record<string, unknown>)
+            .pageProps as Record<string, unknown>
+        ).state as Record<string, unknown>
+      ).data as Record<string, unknown>
+    )?.entity;
+  const trackList = (entity as { trackList?: EmbedTrack[] } | undefined)
+    ?.trackList;
+  if (!Array.isArray(trackList)) {
+    throw new SpotifyError(
+      0,
+      JSON.stringify(entity).slice(0, 400),
+      "Embed entity has no trackList array",
+    );
+  }
+
+  // Extract track IDs for album enrichment.
+  const trackIds: string[] = [];
+  const baseTracks: Array<{
+    spotifyTrackId: string;
+    title: string;
+    artists: string[];
+    durationMs: number;
+  }> = [];
+  for (const t of trackList) {
+    const uri = t.uri;
+    if (!uri) continue;
+    const idMatch = uri.match(/^spotify:track:([A-Za-z0-9]+)/);
+    if (!idMatch) continue;
+    const id = idMatch[1];
+    trackIds.push(id);
+    baseTracks.push({
+      spotifyTrackId: id,
+      title: t.title ?? "",
+      artists: (t.subtitle ?? "")
+        .split(/,\s*/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+      durationMs: t.duration ?? 0,
+    });
+  }
+
+  // Enrich with album name + album image via /v1/tracks?ids=... (up to 50
+  // per request). This catalog endpoint works with user tokens even when
+  // per-playlist track endpoints don't, because it's not scoped to the
+  // playlist's permissions.
+  let user = userIn;
+  const albumById = new Map<string, { name: string; image: string | null }>();
+  for (let i = 0; i < trackIds.length; i += 50) {
+    const batch = trackIds.slice(i, i + 50);
+    try {
+      const resp = await spotifyGet<{
+        tracks: Array<{
+          id: string;
+          album?: { name: string; images?: SpotifyImage[] };
+        } | null>;
+      }>(user, `/tracks?ids=${batch.join(",")}`);
+      user = resp.user;
+      for (const tr of resp.data.tracks) {
+        if (!tr) continue;
+        albumById.set(tr.id, {
+          name: tr.album?.name ?? "",
+          image: tr.album?.images?.[0]?.url ?? null,
+        });
+      }
+    } catch {
+      // Enrichment is best-effort — continue without album data.
+    }
+  }
+
+  // Synthetic stable addedAt so diff keys are idempotent across polls.
+  // We don't know the true addedAt from the embed, so use epoch for all.
+  const stableAddedAt = new Date(0).toISOString();
+  const out: TrackKeyed[] = baseTracks.map((b) => ({
+    spotifyTrackId: b.spotifyTrackId,
+    title: b.title,
+    artists: b.artists,
+    album: albumById.get(b.spotifyTrackId)?.name ?? null,
+    albumImageUrl: albumById.get(b.spotifyTrackId)?.image ?? null,
+    durationMs: b.durationMs,
+    addedAt: stableAddedAt,
+    addedBySpotifyId: null,
+  }));
   return { user, tracks: out };
 }
 
