@@ -112,6 +112,43 @@ export async function GET(request: Request) {
         return { path: "[embed]", status: 0, body: String(err) };
       }
     })(),
+    // Try anon token against simple endpoint to confirm 403 vs rate-limit.
+    await (async () => {
+      try {
+        const embed = await fetch(
+          `https://open.spotify.com/embed/playlist/${playlistId}`,
+          { headers: { "User-Agent": "Mozilla/5.0" } },
+        );
+        const text = await embed.text();
+        const m = text.match(/"accessToken":"([^"]+)"/);
+        if (!m) return { path: "[anon-meta]", status: 0, body: "no token" };
+        const anonTok = m[1];
+        // Retry on 429 up to 3 times.
+        for (let i = 0; i < 3; i++) {
+          const r = await fetch(
+            `https://api.spotify.com/v1/playlists/${playlistId}?fields=id,name,tracks.total`,
+            {
+              headers: {
+                Authorization: `Bearer ${anonTok}`,
+                "User-Agent": "Mozilla/5.0",
+                Origin: "https://open.spotify.com",
+                Referer: `https://open.spotify.com/embed/playlist/${playlistId}`,
+                "App-Platform": "WebPlayer",
+              },
+            },
+          );
+          if (r.status === 429) {
+            await new Promise((res) => setTimeout(res, 1500));
+            continue;
+          }
+          const body = await r.text();
+          return { path: "[anon-meta]", status: r.status, body: body.slice(0, 600) };
+        }
+        return { path: "[anon-meta]", status: 429, body: "rate-limited after 3 retries" };
+      } catch (err) {
+        return { path: "[anon-meta]", status: 0, body: String(err) };
+      }
+    })(),
     // Scrape anon token from embed HTML, then hit /tracks?offset=100 from Vercel.
     await (async () => {
       try {
