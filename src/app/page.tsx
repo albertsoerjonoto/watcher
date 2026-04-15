@@ -236,14 +236,14 @@ export default async function DashboardPage() {
               By {ownerName}
             </h2>
             <ul className="divide-y divide-neutral-800 rounded-lg border border-neutral-800">
-              {rows.map((p) => {
+              {rows.map((p, groupIdx) => {
                 const recent = recentByPlaylist.get(p.id) ?? [];
-                const groupIdx = rows.findIndex((x) => x.id === p.id);
-                const prevId = groupIdx > 0 ? rows[groupIdx - 1].id : null;
-                const nextId =
-                  groupIdx < rows.length - 1 ? rows[groupIdx + 1].id : null;
                 return (
-                  <li key={p.id} className="p-4">
+                  <li
+                    key={p.id}
+                    data-playlist-id={p.id}
+                    className="p-4"
+                  >
                     <div className="flex items-start gap-3">
                       {p.imageUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -291,8 +291,6 @@ export default async function DashboardPage() {
                         playlistName={p.name}
                         isFirst={groupIdx === 0}
                         isLast={groupIdx === rows.length - 1}
-                        prevId={prevId}
-                        nextId={nextId}
                       />
                     </div>
                     {recent.length > 0 && (
