@@ -127,7 +127,21 @@ export async function spotifyGet<T = unknown>(
       // timeout — and the user's Add button would spin forever. Fail
       // fast and let the caller (AutoRefresh / retry endpoint) try
       // again on its own cadence.
-      if (attempt > 1) throw new SpotifyError(429, await res.text());
+      if (attempt > 1) {
+        // Surface the Retry-After cooldown in the error message so
+        // PollLog / the dashboard banner can tell the user how long
+        // until Spotify will accept another request. Spotify's
+        // Retry-After is in whole seconds.
+        const body = await res.text();
+        const suffix = Number.isFinite(retry) && retry > 0
+          ? ` — retry after ${retry}s`
+          : "";
+        throw new SpotifyError(
+          429,
+          body,
+          `Spotify API error 429: Too many requests${suffix}`,
+        );
+      }
       await sleep(Math.min(retry, 5) * 1000);
       continue;
     }
