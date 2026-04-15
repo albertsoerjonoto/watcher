@@ -96,6 +96,31 @@ export async function pollPlaylist(
     );
     user = u2;
 
+    // Clean up stale epoch-dated rows before diffing. When the Web API
+    // 403s on /tracks, the embed fallback inserts rows with a synthetic
+    // addedAt = 1970-01-01 because the embed page doesn't expose real
+    // added_at timestamps. Later, when the Pathfinder fallback succeeds
+    // and returns the SAME spotifyTrackId with a real addedAt, the
+    // (spotifyTrackId, addedAt) composite key treats it as a new row —
+    // leaving the playlist with both the stale epoch row and the real
+    // one. Delete the stale rows whenever the incoming batch has a real
+    // addedAt for the same spotifyTrackId.
+    const incomingIdsWithRealDate = incoming
+      .filter((t) => {
+        const d = t.addedAt instanceof Date ? t.addedAt : new Date(t.addedAt);
+        return d.getTime() > 0;
+      })
+      .map((t) => t.spotifyTrackId);
+    if (incomingIdsWithRealDate.length) {
+      await prisma.track.deleteMany({
+        where: {
+          playlistId: playlist.id,
+          spotifyTrackId: { in: incomingIdsWithRealDate },
+          addedAt: new Date(0),
+        },
+      });
+    }
+
     const existing = await loadExistingKeys(playlist.id);
     const added = diffTracks(existing, incoming);
 
