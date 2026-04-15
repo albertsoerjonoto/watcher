@@ -8,13 +8,16 @@ export const dynamic = "force-dynamic";
 export default async function SettingsPage() {
   const user = await getCurrentUser();
   if (!user) return <p className="text-neutral-400">Sign in required.</p>;
-  const playlists = await prisma.playlist.findMany({
-    where: { userId: user.id },
-    orderBy: { createdAt: "asc" },
-  });
-  const subCount = await prisma.pushSubscription.count({
-    where: { userId: user.id },
-  });
+  // Parallel fan-out — these were sequential, which forced an extra
+  // round-trip through the Supabase txn pooler on every Settings nav
+  // and contributed to the multi-second tab-switch lag.
+  const [playlists, subCount] = await Promise.all([
+    prisma.playlist.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.pushSubscription.count({ where: { userId: user.id } }),
+  ]);
 
   return (
     <section className="space-y-6">
