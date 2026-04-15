@@ -12,3 +12,5 @@ coverage
 .vercel
 tsconfig.tsbuildinfo
 gstack
+.gstack
+.claude
