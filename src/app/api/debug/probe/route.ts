@@ -80,6 +80,10 @@ export async function GET(request: Request) {
     ),
     await probe(user, `/playlists/${playlistId}?fields=tracks.total`),
     await probe(user, `/playlists/${playlistId}?market=from_token`),
+    await probe(user, `/playlists/${playlistId}?fields=items.total`),
+    await probe(user, `/playlists/${playlistId}?fields=items(added_at,track(id,name))`),
+    await probe(user, `/playlists/${playlistId}?fields=items`),
+    await probe(user, `/playlists/${playlistId}?additional_types=track,episode`),
     await probe(
       user,
       `/playlists/${playlistId}?fields=name,tracks.items(added_at,track(id,name))`,
