@@ -353,14 +353,22 @@ export async function fetchAllPlaylistTracks(
       if (metaTotal === 0) {
         return { user, tracks: out };
       }
-      // Tier 1 fallback: Client Credentials (app token). Separate quota
-      // pool from the user token and often succeeds where user-scoped
-      // calls don't. Only works if SPOTIFY_CLIENT_SECRET is configured.
+      // Tier 1 fallback: Pathfinder GraphQL. This is what the desktop
+      // web player uses, and it supports offset pagination across the
+      // full playlist (not capped at 100 like the embed). Returns
+      // everything — real addedAt, addedBy, album art, the works.
+      const pathfinderTracks = await fetchAllTracksViaPathfinder(playlistId);
+      if (pathfinderTracks && pathfinderTracks.length > 0) {
+        return { user, tracks: pathfinderTracks };
+      }
+      // Tier 2 fallback: Client Credentials (app token). Separate quota
+      // pool from the user token and not subject to user-scope
+      // restrictions. Only works if SPOTIFY_CLIENT_SECRET is set.
       const appTracks = await fetchAllTracksWithAppToken(playlistId);
       if (appTracks && appTracks.length > 0) {
         return { user, tracks: appTracks };
       }
-      // Tier 2 fallback: scrape the public embed page's __NEXT_DATA__.
+      // Tier 3 fallback: scrape the public embed page's __NEXT_DATA__.
       // Caps at ~100 tracks and has no real `addedAt` — we enrich album
       // metadata via /v1/tracks?ids= (catalog endpoint works on user
       // tokens even when playlist-track endpoints don't) and synthesize
@@ -553,6 +561,168 @@ async function fetchAllTracksWithAppToken(
     nextPath = page.next ? page.next.replace(API, "") : null;
   }
   return all.length > 0 ? all : null;
+}
+
+// --- Pathfinder GraphQL fallback for playlists where Spotify blocks
+// the public Web API. Uses the same internal API that open.spotify.com's
+// web player uses:
+//
+//   1. Scrape an anonymous access token from the embed page HTML
+//      (the __NEXT_DATA__ script includes `accessToken`).
+//   2. POST fetchPlaylistContents to api-partner.spotify.com/pathfinder/v2
+//      with a persistedQuery sha256Hash extracted from the desktop web
+//      player JS bundle. This is the query the real web player uses to
+//      render playlist pages, so it sees ALL tracks (not just the first
+//      100 like the embed page). Supports offset/limit pagination.
+//
+// The returned payload includes real addedAt, addedBy, album name,
+// album art, and artists — everything we need, no separate enrichment.
+
+// Query hash for `fetchPlaylistContents` extracted from the desktop
+// web-player bundle (web-player.*.js). If Spotify rotates this, our
+// pathfinder fallback returns 412 Invalid query hash and we'll need to
+// scrape the new hash from the bundle at runtime. For now a hard-coded
+// hash is simpler than a runtime extractor.
+const PATHFINDER_PLAYLIST_HASH =
+  "32b05e92e438438408674f95d0fdad8082865dc32acd55bd97f5113b8579092b";
+
+async function fetchAnonAccessToken(
+  playlistId: string,
+): Promise<string | null> {
+  const res = await fetch(
+    `https://open.spotify.com/embed/playlist/${playlistId}`,
+    {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml",
+      },
+    },
+  );
+  if (!res.ok) return null;
+  const html = await res.text();
+  const m = html.match(/"accessToken":"([^"]+)"/);
+  return m ? m[1] : null;
+}
+
+interface PathfinderTrackItem {
+  addedAt?: { isoString?: string };
+  addedBy?: { data?: { username?: string; uri?: string } };
+  itemV2?: {
+    data?: {
+      uri?: string;
+      name?: string;
+      trackDuration?: { totalMilliseconds?: number };
+      artists?: { items?: Array<{ profile?: { name?: string } }> };
+      albumOfTrack?: {
+        name?: string;
+        coverArt?: { sources?: Array<{ url?: string; height?: number }> };
+      };
+    };
+  };
+}
+
+async function fetchPathfinderPage(
+  token: string,
+  playlistId: string,
+  offset: number,
+  limit: number,
+): Promise<{ items: PathfinderTrackItem[]; total: number } | null> {
+  const body = JSON.stringify({
+    operationName: "fetchPlaylistContents",
+    variables: {
+      uri: `spotify:playlist:${playlistId}`,
+      offset,
+      limit,
+    },
+    extensions: {
+      persistedQuery: {
+        version: 1,
+        sha256Hash: PATHFINDER_PLAYLIST_HASH,
+      },
+    },
+  });
+  const res = await fetch("https://api-partner.spotify.com/pathfinder/v2/query", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "App-Platform": "WebPlayer",
+      Origin: "https://open.spotify.com",
+      Referer: "https://open.spotify.com/",
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    },
+    body,
+  });
+  if (!res.ok) return null;
+  const json = (await res.json()) as {
+    data?: {
+      playlistV2?: {
+        content?: {
+          items?: PathfinderTrackItem[];
+          totalCount?: number;
+        };
+      };
+    };
+  };
+  const content = json?.data?.playlistV2?.content;
+  if (!content || !Array.isArray(content.items)) return null;
+  return { items: content.items, total: content.totalCount ?? content.items.length };
+}
+
+function normalizePathfinderItems(
+  items: PathfinderTrackItem[],
+  out: TrackKeyed[],
+) {
+  for (const it of items) {
+    const data = it.itemV2?.data;
+    if (!data?.uri) continue;
+    const idMatch = data.uri.match(/^spotify:track:([A-Za-z0-9]+)/);
+    if (!idMatch) continue;
+    const artists = (data.artists?.items ?? [])
+      .map((a) => a.profile?.name ?? "")
+      .filter(Boolean);
+    // Prefer the 300px cover when available, else the first source.
+    const coverSources = data.albumOfTrack?.coverArt?.sources ?? [];
+    const cover300 =
+      coverSources.find((s) => s.height === 300) ?? coverSources[0];
+    out.push({
+      spotifyTrackId: idMatch[1],
+      title: data.name ?? "",
+      artists,
+      album: data.albumOfTrack?.name ?? null,
+      albumImageUrl: cover300?.url ?? null,
+      durationMs: data.trackDuration?.totalMilliseconds ?? 0,
+      addedAt: it.addedAt?.isoString ?? new Date(0).toISOString(),
+      addedBySpotifyId: it.addedBy?.data?.username ?? null,
+    });
+  }
+}
+
+async function fetchAllTracksViaPathfinder(
+  playlistId: string,
+): Promise<TrackKeyed[] | null> {
+  const token = await fetchAnonAccessToken(playlistId);
+  if (!token) return null;
+  const out: TrackKeyed[] = [];
+  const PAGE = 100;
+  let offset = 0;
+  // Hard cap at 100 pages (10k tracks) as a safety net.
+  for (let guard = 0; guard < 100; guard++) {
+    const page = await fetchPathfinderPage(token, playlistId, offset, PAGE);
+    if (!page) {
+      // First-page failure → give up. Later-page failure → keep what we have.
+      if (out.length === 0) return null;
+      break;
+    }
+    normalizePathfinderItems(page.items, out);
+    if (page.items.length < PAGE) break;
+    offset += page.items.length;
+    if (offset >= page.total) break;
+  }
+  return out.length > 0 ? out : null;
 }
 
 // --- Embed-based fallback for playlists where Spotify blocks the Web
