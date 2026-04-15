@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -12,8 +13,34 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
 }
 
 export function EnablePush() {
+  const router = useRouter();
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Client-side view of whether THIS device currently has an active
+  // push subscription. The server-rendered "N device(s) subscribed"
+  // counts across all devices, which is useful but doesn't tell the
+  // user whether *this* browser is one of them.
+  const [subscribedHere, setSubscribedHere] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+          if (!cancelled) setSubscribedHere(false);
+          return;
+        }
+        const reg = await navigator.serviceWorker.getRegistration();
+        const sub = await reg?.pushManager.getSubscription();
+        if (!cancelled) setSubscribedHere(!!sub);
+      } catch {
+        if (!cancelled) setSubscribedHere(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function enable() {
     setBusy(true);
@@ -49,7 +76,11 @@ export function EnablePush() {
         body: JSON.stringify(sub.toJSON()),
       });
       if (!res.ok) throw new Error("Failed to register subscription");
+      setSubscribedHere(true);
       setStatus("Subscribed. Tap “Send test” to verify.");
+      // Re-fetch the RSC so the "N device(s) subscribed" count
+      // updates without a hard reload.
+      router.refresh();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err));
     } finally {
@@ -64,6 +95,9 @@ export function EnablePush() {
       const res = await fetch("/api/push/subscribe", { method: "PUT" });
       const body = await res.json();
       setStatus(`Test: sent=${body.sent} pruned=${body.pruned}`);
+      // Pruned means dead subscriptions were deleted — refresh the
+      // count so the UI reflects reality.
+      if (body.pruned > 0) router.refresh();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err));
     } finally {
@@ -73,17 +107,27 @@ export function EnablePush() {
 
   return (
     <div className="space-y-2">
+      {subscribedHere === true && (
+        <p className="text-xs text-spotify">
+          ✓ This device is subscribed.
+        </p>
+      )}
+      {subscribedHere === false && (
+        <p className="text-xs text-neutral-500">
+          This device is not subscribed yet.
+        </p>
+      )}
       <div className="flex gap-2">
         <button
           onClick={enable}
           disabled={busy}
           className="rounded bg-spotify px-3 py-1 text-sm font-semibold text-black disabled:opacity-50"
         >
-          Enable on this device
+          {subscribedHere ? "Re-enable" : "Enable on this device"}
         </button>
         <button
           onClick={test}
-          disabled={busy}
+          disabled={busy || subscribedHere !== true}
           className="rounded border border-neutral-700 px-3 py-1 text-sm disabled:opacity-50"
         >
           Send test
