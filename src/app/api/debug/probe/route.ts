@@ -67,6 +67,9 @@ export async function GET(request: Request) {
       `/playlists/${playlistId}?fields=id,name,snapshot_id,owner(id,display_name)`,
     ),
     await probe(user, `/playlists/${playlistId}/tracks?limit=5`),
+    await probe(user, `/playlists/${playlistId}/tracks?limit=100`),
+    await probe(user, `/playlists/${playlistId}/items?limit=5`),
+    await probe(user, `/playlists/${playlistId}/items?limit=100`),
     await probe(
       user,
       `/playlists/${playlistId}/tracks?limit=5&market=from_token`,
@@ -75,6 +78,8 @@ export async function GET(request: Request) {
       user,
       `/playlists/${playlistId}/tracks?limit=5&market=ID`,
     ),
+    await probe(user, `/playlists/${playlistId}?fields=tracks.total`),
+    await probe(user, `/playlists/${playlistId}?market=from_token`),
     await probe(
       user,
       `/playlists/${playlistId}?fields=name,tracks.items(added_at,track(id,name))`,
