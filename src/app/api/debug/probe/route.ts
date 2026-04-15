@@ -112,6 +112,35 @@ export async function GET(request: Request) {
         return { path: "[embed]", status: 0, body: String(err) };
       }
     })(),
+    // Scrape anon token from embed HTML, then hit /tracks?offset=100 from Vercel.
+    await (async () => {
+      try {
+        const embed = await fetch(
+          `https://open.spotify.com/embed/playlist/${playlistId}`,
+          { headers: { "User-Agent": "Mozilla/5.0" } },
+        );
+        const text = await embed.text();
+        const m = text.match(/"accessToken":"([^"]+)"/);
+        if (!m) return { path: "[anon-tracks]", status: 0, body: "no token in embed" };
+        const anonTok = m[1];
+        const r = await fetch(
+          `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100&offset=100`,
+          {
+            headers: {
+              Authorization: `Bearer ${anonTok}`,
+              "User-Agent": "Mozilla/5.0",
+              Origin: "https://open.spotify.com",
+              Referer: `https://open.spotify.com/embed/playlist/${playlistId}`,
+              "App-Platform": "WebPlayer",
+            },
+          },
+        );
+        const body = await r.text();
+        return { path: "[anon-tracks]", status: r.status, body: body.slice(0, 800) };
+      } catch (err) {
+        return { path: "[anon-tracks]", status: 0, body: String(err) };
+      }
+    })(),
     await probe(
       user,
       `/playlists/${playlistId}?fields=name,tracks.items(added_at,track(id,name))`,
