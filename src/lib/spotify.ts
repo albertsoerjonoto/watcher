@@ -291,9 +291,9 @@ export async function fetchAllPlaylistTracks(
   const out: TrackKeyed[] = [];
   const initialPage = extractTracksPage(first.data);
 
-  // Infer total from either the paging wrapper or the playlist metadata's
-  // `tracks.total` scalar — Spotify sometimes returns the latter even when
-  // it omits the paging wrapper entirely.
+  // Infer total from the playlist metadata's `tracks.total` scalar — Spotify
+  // sometimes returns the latter even when it omits the paging wrapper
+  // entirely. Returns null if the total is genuinely unknown (distinct from 0).
   function inferTotal(d: unknown): number | null {
     if (!d || typeof d !== "object") return null;
     const o = d as Record<string, unknown>;
@@ -311,17 +311,23 @@ export async function fetchAllPlaylistTracks(
     normalizeItems(page.items, out);
     total = page.total;
   } else {
-    // Shape 4: Spotify returned a playlist object with no embedded tracks
-    // at all — not even an empty `items` array. Fall back to the dedicated
-    // track-listing endpoints. We try `/items` (current) then `/tracks`
-    // (legacy). Any 403/404/empty means "nothing more to fetch" — we
-    // accept that and continue with what we have.
-    const fallbackTotal = inferTotal(first.data) ?? 0;
-    total = fallbackTotal;
+    // Spotify returned a playlist object with no embedded tracks — not even
+    // an empty `items` array. Fall back to the dedicated track-listing
+    // endpoints. We try `/items` (current) then `/tracks` (legacy).
+    //
+    // We need to distinguish two cases:
+    //   (a) The playlist is genuinely empty (total=0 via metadata).
+    //   (b) Spotify is blocking track access for this playlist entirely
+    //       — every endpoint 403s and the main call silently strips
+    //       `tracks`. This happens for some 3rd-party playlists and there
+    //       is no way around it with a user token + our scopes. Surface
+    //       this as a loud error so the user knows the import failed.
+    const metaTotal = inferTotal(first.data); // null = unknown, 0 = empty, >0 = has tracks
     const endpoints = [
       `/playlists/${playlistId}/items?limit=100`,
       `/playlists/${playlistId}/tracks?limit=100`,
     ];
+    const fallbackStatuses: number[] = [];
     for (const ep of endpoints) {
       try {
         const resp = await spotifyGet<unknown>(user, ep);
@@ -330,38 +336,34 @@ export async function fetchAllPlaylistTracks(
         if (!p) continue;
         page = p;
         normalizeItems(p.items, out);
-        // Trust the paging wrapper's total if we got one.
-        if (p.total) total = Math.max(total, p.total);
+        total = p.total || metaTotal || p.items.length;
         break;
       } catch (err) {
-        if (
-          err instanceof SpotifyError &&
-          (err.status === 403 || err.status === 404)
-        ) {
-          continue;
+        if (err instanceof SpotifyError) {
+          fallbackStatuses.push(err.status);
+          if (err.status === 403 || err.status === 404) continue;
         }
         throw err;
       }
     }
-    // If every fallback failed AND the playlist metadata told us total=0,
-    // that's the legitimate "empty playlist" case — return gracefully.
-    // If total>0 and we got nothing, surface a more helpful error.
-    if (!page && total > 0) {
-      const d =
-        first.data && typeof first.data === "object"
-          ? (first.data as Record<string, unknown>)
-          : {};
-      const keys = Object.keys(d).join(",");
+
+    if (!page) {
+      // All fallbacks failed. If metadata explicitly said total=0, this is
+      // a legitimate empty playlist.
+      if (metaTotal === 0) {
+        return { user, tracks: out };
+      }
+      // Otherwise Spotify is blocking us. Tell the user plainly.
+      const statusStr = fallbackStatuses.length
+        ? fallbackStatuses.join(",")
+        : "none";
       throw new SpotifyError(
-        0,
+        403,
         first.data,
-        `no tracks field and dedicated endpoints returned no data. total=${total} top=[${keys}]`,
+        `Spotify blocked track access for this playlist. The main /playlists/{id} response omits the tracks field, and /items + /tracks both returned ${statusStr}. This is a Spotify restriction on the playlist (sometimes applied to 3rd-party playlists) and cannot be worked around with the current user scopes.`,
       );
     }
-    if (!page) {
-      // Empty playlist — no tracks to return.
-      return { user, tracks: out };
-    }
+    total = Math.max(total, metaTotal ?? 0);
   }
 
   // Pagination. Spotify's behavior here is flaky — the dedicated
