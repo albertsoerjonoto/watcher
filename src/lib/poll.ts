@@ -279,8 +279,22 @@ export async function pollPlaylist(
 }
 
 export async function pollAllForUser(user: User): Promise<PollResult[]> {
+  // Only poll playlists whose lastCheckedAt is older than the staleness
+  // threshold, or has never been checked at all. This prevents a cron
+  // that fires more often than the staleness window from re-polling
+  // playlists we already just checked. STALE_THRESHOLD_MS is the
+  // single knob for "how often we hit Spotify".
+  const { STALE_THRESHOLD_MS } = await import("./stale");
+  const staleCutoff = new Date(Date.now() - STALE_THRESHOLD_MS);
   const playlists = await prisma.playlist.findMany({
-    where: { userId: user.id, status: "active" },
+    where: {
+      userId: user.id,
+      status: "active",
+      OR: [
+        { lastCheckedAt: null },
+        { lastCheckedAt: { lt: staleCutoff } },
+      ],
+    },
   });
   const results: PollResult[] = [];
   // Sequential to keep rate-limit pressure sane.
@@ -291,6 +305,9 @@ export async function pollAllForUser(user: User): Promise<PollResult[]> {
     // Reload user in case token was refreshed in-flight.
     const fresh = await prisma.user.findUnique({ where: { id: u.id } });
     if (fresh) u = fresh;
+    // Short-circuit if we just tripped a 429 — further polls would
+    // just bail at assertCanCallSpotify anyway.
+    if (r.error?.includes("429") || r.error?.includes("cooldown")) break;
   }
   return results;
 }

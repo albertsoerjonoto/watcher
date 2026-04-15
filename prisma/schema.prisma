@@ -85,6 +85,18 @@ model PushSubscription {
   createdAt DateTime @default(now())
 }
 
+// Cross-instance key/value state. Today it stores one row:
+//   key = "spotify:rateLimitedUntil", value = ISO timestamp
+// so every serverless instance (and cron worker) respects the same
+// cooldown. Without this, a cold-started lambda would happily fire a
+// fresh Spotify request right after the previous instance got 429'd,
+// re-arming the rolling-30s counter and extending the penalty.
+model AppState {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
 model DeviceToken {
   id        String   @id @default(cuid())
   userId    String

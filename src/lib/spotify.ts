@@ -99,43 +99,49 @@ async function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// Global rate-limit backoff. When any spotifyGet hits a 429, every
-// subsequent call in the same serverless instance short-circuits with
-// the same error until `rateLimitedUntil` elapses. Without this, a
-// rate-limited /api/refresh cycles through all five watched playlists
-// sequentially, each eating the full retry budget, each writing its
-// own "429" row to PollLog, and the dashboard lights up red for every
-// playlist simultaneously.
-let rateLimitedUntil = 0;
-
-function currentCooldownSeconds(): number {
-  const ms = rateLimitedUntil - Date.now();
-  return ms > 0 ? Math.ceil(ms / 1000) : 0;
-}
-
-function raiseRateLimited(): never {
-  const s = currentCooldownSeconds();
-  throw new SpotifyError(
-    429,
-    "cooldown",
-    `Spotify API error 429: Too many requests — retry after ${s}s`,
-  );
-}
+// Rate-limit prevention lives in `./rate-limit` — see the post-mortem
+// there. This module just has to honor three rules:
+//
+//   1. Call assertCanCallSpotify() BEFORE every outgoing request.
+//   2. Call recordSpotifyCall() after it returns (success or 429).
+//   3. On 429 response, call recordRateLimited(retryAfter) and throw
+//      immediately. Do NOT retry. Do NOT fall through to a different
+//      endpoint (Pathfinder, embed, etc.) — they all share the same
+//      per-account / per-IP bucket and escalate the penalty.
+import {
+  assertCanCallSpotify,
+  recordSpotifyCall,
+  recordRateLimited,
+  SpotifyRateLimitError,
+} from "./rate-limit";
 
 /**
  * Authed GET against Spotify with refresh-token rotation and Retry-After
- * handling. Retries 429 and 5xx up to 3 times.
+ * handling. Does NOT retry 429 — we fail fast and let the scheduled
+ * caller (cron, AutoRefresh stale check) try again after the cooldown.
  */
 export async function spotifyGet<T = unknown>(
   userIn: User,
   path: string,
 ): Promise<{ user: User; data: T }> {
-  if (currentCooldownSeconds() > 0) raiseRateLimited();
+  // Gate 1: cross-instance cooldown + rolling-30s budget. Throws
+  // SpotifyRateLimitError without touching the network if either
+  // fails. Re-thrown as SpotifyError(429) below so all callers see
+  // the same shape.
+  try {
+    await assertCanCallSpotify();
+  } catch (e) {
+    if (e instanceof SpotifyRateLimitError) {
+      throw new SpotifyError(429, "cooldown", e.message);
+    }
+    throw e;
+  }
   let user = await ensureFreshToken(userIn);
   let attempt = 0;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     attempt++;
+    recordSpotifyCall();
     const res = await fetch(`${API}${path}`, {
       headers: { Authorization: `Bearer ${user.accessToken}` },
     });
@@ -145,22 +151,18 @@ export async function spotifyGet<T = unknown>(
     }
     if (res.status === 429) {
       const retry = Number(res.headers.get("retry-after") ?? "1");
-      // Cap total back-off at ~5s and bail after 1 retry. The previous
-      // 4×30s budget meant a single rate-limited meta fetch could hang
-      // a request for two minutes — longer than Vercel's function
-      // timeout — and the user's Add button would spin forever. Fail
-      // fast and let the caller (AutoRefresh / retry endpoint) try
-      // again on its own cadence.
-      if (attempt > 1) {
-        // Set the global cooldown so every subsequent call in this
-        // instance bails fast until Spotify says we can try again.
-        const seconds = Number.isFinite(retry) && retry > 0 ? retry : 1;
-        rateLimitedUntil = Date.now() + seconds * 1000;
-        await res.text().catch(() => "");
-        raiseRateLimited();
-      }
-      await sleep(Math.min(retry, 5) * 1000);
-      continue;
+      // Persist the cooldown to AppState so a fresh lambda on the
+      // next request sees it. This is the critical fix: previously
+      // the cooldown lived in-memory and a new instance would happily
+      // fire another request 200ms later, re-arming the rolling
+      // window. See `src/lib/rate-limit.ts` for the post-mortem.
+      await recordRateLimited(retry);
+      await res.text().catch(() => "");
+      throw new SpotifyError(
+        429,
+        "cooldown",
+        `Spotify API error 429: Too many requests — retry after ${Math.max(1, Math.ceil(retry))}s`,
+      );
     }
     if (res.status >= 500 && attempt < 3) {
       await sleep(500 * attempt);
@@ -558,6 +560,15 @@ async function appTokenGet<T>(path: string): Promise<T | null> {
 async function fetchAllTracksWithAppToken(
   playlistId: string,
 ): Promise<TrackKeyed[] | null> {
+  // Client Credentials uses a *different* token but still talks to
+  // api.spotify.com — same IP bucket as user-token calls. Gate it.
+  try {
+    await assertCanCallSpotify();
+  } catch (e) {
+    if (e instanceof SpotifyRateLimitError) return null;
+    throw e;
+  }
+  recordSpotifyCall();
   const tok = await getAppToken();
   if (!tok) return null;
 
@@ -741,6 +752,17 @@ function normalizePathfinderItems(
 async function fetchAllTracksViaPathfinder(
   playlistId: string,
 ): Promise<TrackKeyed[] | null> {
+  // api-partner.spotify.com shares a bucket with api.spotify.com from
+  // Spotify's rate-limiter perspective (they correlate by IP and by
+  // account if the anon token was minted under one). Calling this
+  // while cooling down would extend the penalty. Gate it.
+  try {
+    await assertCanCallSpotify();
+  } catch (e) {
+    if (e instanceof SpotifyRateLimitError) return null;
+    throw e;
+  }
+  recordSpotifyCall();
   const token = await fetchAnonAccessToken(playlistId);
   if (!token) return null;
   const out: TrackKeyed[] = [];
@@ -782,6 +804,17 @@ async function fetchEmbedTracks(
   userIn: User,
   playlistId: string,
 ): Promise<{ user: User; tracks: TrackKeyed[] }> {
+  // open.spotify.com embed page — same server infra as the rest of
+  // Spotify from their rate-limiter's perspective. Gate it.
+  try {
+    await assertCanCallSpotify();
+  } catch (e) {
+    if (e instanceof SpotifyRateLimitError) {
+      return { user: userIn, tracks: [] };
+    }
+    throw e;
+  }
+  recordSpotifyCall();
   const res = await fetch(
     `https://open.spotify.com/embed/playlist/${playlistId}`,
     {

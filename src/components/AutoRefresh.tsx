@@ -3,25 +3,43 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-// Mounted on the dashboard. On first paint (and whenever the tab becomes
-// visible again) it POSTs /api/refresh to pull fresh tracks from Spotify,
-// then router.refresh()es the RSC so the new rows show up without a
-// hard reload. This is the substitute for a high-frequency cron job on
-// Vercel Hobby (which only runs once a day).
+// Mounted on the dashboard. Before firing the real /api/refresh (which
+// polls Spotify), it first GETs /api/sync-status — a pure-DB endpoint
+// that reports (a) the current Spotify cooldown in seconds and (b) how
+// many playlists are actually stale enough to warrant a re-poll.
 //
-// Visible state on the dashboard header tells the user whether a sync
-// is in flight and what came back. The state is intentionally chatty
-// because the previous "syncing… / up to date" badge made it impossible
-// to tell whether a manual click actually did anything.
+// The refresh only happens when BOTH gates pass:
+//   - cooldownSeconds === 0
+//   - staleCount > 0
+//
+// Why this is important (post-mortem):
+//
+//   Earlier versions fired /api/refresh on mount and on every
+//   visibilitychange, re-polling every watched playlist regardless of
+//   how recently we'd checked. A full afternoon of tab-switching
+//   during dev burned through Spotify's rolling-30s budget and earned
+//   a ~12-hour 429 block. See src/lib/rate-limit.ts for the full
+//   post-mortem and the prevention strategy.
 type SyncState =
   | { kind: "idle" }
+  | { kind: "checking" }
   | { kind: "syncing" }
   | { kind: "ok"; new: number; at: number }
+  | { kind: "fresh" } // nothing to refresh — all playlists recently checked
   | { kind: "error"; message: string }
-  | { kind: "rateLimited"; message: string };
+  | { kind: "rateLimited"; secondsRemaining: number };
 
 interface RefreshResponse {
+  skipped?: "cooldown" | "fresh";
+  cooldownSeconds?: number;
   results?: { newTracks: number; error?: string }[];
+}
+
+interface StatusResponse {
+  cooldownSeconds: number;
+  staleCount: number;
+  totalActive: number;
+  staleThresholdMinutes: number;
 }
 
 export function AutoRefresh() {
@@ -33,36 +51,68 @@ export function AutoRefresh() {
   async function run(force = false) {
     if (busyRef.current) return;
     const now = Date.now();
-    // 5s minimum between automatic syncs so rapid tab-switches don't
-    // hammer Spotify, but a manual click bypasses the debounce.
-    if (!force && now - lastRunRef.current < 5_000) return;
+    // 10s minimum between automatic checks so rapid tab-switching
+    // doesn't DOS our own status endpoint. A manual button click
+    // bypasses this.
+    if (!force && now - lastRunRef.current < 10_000) return;
     lastRunRef.current = now;
     busyRef.current = true;
-    setState({ kind: "syncing" });
+    setState({ kind: "checking" });
     try {
-      const res = await fetch("/api/refresh", { method: "POST" });
-      if (!res.ok) {
+      // Phase 1: DB-only status check. Cheap, no Spotify calls.
+      const statusRes = await fetch("/api/sync-status", { cache: "no-store" });
+      if (!statusRes.ok) {
+        setState({ kind: "error", message: `status ${statusRes.status}` });
+        return;
+      }
+      const status = (await statusRes.json()) as StatusResponse;
+      if (status.cooldownSeconds > 0) {
         setState({
-          kind: "error",
-          message: `HTTP ${res.status}`,
+          kind: "rateLimited",
+          secondsRemaining: status.cooldownSeconds,
         });
         return;
       }
+      if (status.staleCount === 0 && !force) {
+        setState({ kind: "fresh" });
+        return;
+      }
+
+      // Phase 2: real refresh. Only reached if we actually have work
+      // to do AND Spotify isn't cooling us down.
+      setState({ kind: "syncing" });
+      const res = await fetch("/api/refresh", { method: "POST" });
+      if (!res.ok) {
+        setState({ kind: "error", message: `HTTP ${res.status}` });
+        return;
+      }
       const body = (await res.json()) as RefreshResponse;
+      if (body.skipped === "cooldown") {
+        setState({
+          kind: "rateLimited",
+          secondsRemaining: body.cooldownSeconds ?? 0,
+        });
+        return;
+      }
+      if (body.skipped === "fresh") {
+        setState({ kind: "fresh" });
+        return;
+      }
       const totalNew =
         body.results?.reduce((acc, r) => acc + (r.newTracks ?? 0), 0) ?? 0;
       const allErrors = body.results?.filter((r) => r.error) ?? [];
       const firstRealError = allErrors.find(
-        (r) => !r.error?.includes("429"),
+        (r) => !r.error?.includes("429") && !r.error?.includes("cooldown"),
       )?.error;
       const firstRateLimit = allErrors[0]?.error;
       if (firstRealError) {
         setState({ kind: "error", message: firstRealError });
       } else if (firstRateLimit && allErrors.length > 0) {
-        // Every poll in the batch rate-limited. Surface that
-        // distinctly so "sync error" red isn't alarming — it's not
-        // actually broken, just throttled.
-        setState({ kind: "rateLimited", message: firstRateLimit });
+        const m = firstRateLimit.match(/retry after (\d+)s/i);
+        setState({
+          kind: "rateLimited",
+          secondsRemaining: m ? Number(m[1]) : 0,
+        });
       } else {
         setState({ kind: "ok", new: totalNew, at: Date.now() });
       }
@@ -91,16 +141,26 @@ export function AutoRefresh() {
 
   let dotClass = "bg-neutral-700";
   let label: string = "ready";
-  if (state.kind === "syncing") {
+  let disabled = false;
+  if (state.kind === "checking") {
+    dotClass = "animate-pulse bg-neutral-500";
+    label = "checking…";
+    disabled = true;
+  } else if (state.kind === "syncing") {
     dotClass = "animate-pulse bg-spotify";
     label = "syncing…";
+    disabled = true;
   } else if (state.kind === "ok") {
     dotClass = "bg-spotify";
     label = state.new > 0 ? `+${state.new} new` : "up to date";
+  } else if (state.kind === "fresh") {
+    dotClass = "bg-neutral-600";
+    label = "up to date";
   } else if (state.kind === "rateLimited") {
     dotClass = "bg-amber-500";
-    const m = state.message.match(/retry after (\d+)s/i);
-    label = m ? `rate limited · ${m[1]}s` : "rate limited";
+    label = state.secondsRemaining
+      ? `rate limited · ${state.secondsRemaining}s`
+      : "rate limited";
   } else if (state.kind === "error") {
     dotClass = "bg-red-500";
     label = "sync error";
@@ -111,11 +171,13 @@ export function AutoRefresh() {
       <button
         type="button"
         onClick={() => run(true)}
-        disabled={state.kind === "syncing"}
+        disabled={disabled}
         title={
-          state.kind === "error" || state.kind === "rateLimited"
+          state.kind === "error"
             ? state.message
-            : "Sync now"
+            : state.kind === "rateLimited"
+              ? `Spotify rate-limited — retry in ${state.secondsRemaining}s`
+              : "Sync now"
         }
         className="flex items-center gap-1.5 rounded border border-neutral-800 px-2 py-1 hover:bg-neutral-900 disabled:opacity-60"
       >

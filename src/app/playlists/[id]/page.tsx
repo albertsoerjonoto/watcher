@@ -8,12 +8,19 @@ export const dynamic = "force-dynamic";
 
 type Order = "asc" | "desc";
 
+// Default page size for the playlist detail view. Large enough that a
+// typical watched playlist (~100-300 tracks) renders in one go, small
+// enough that a 5k-track editorial playlist doesn't hang the RSC
+// render. The `?take=N` query param lets power users override.
+const DEFAULT_TAKE = 200;
+const MAX_TAKE = 1000;
+
 export default async function PlaylistPage({
   params,
   searchParams,
 }: {
   params: { id: string };
-  searchParams: { since?: string; order?: string };
+  searchParams: { since?: string; order?: string; take?: string };
 }) {
   const user = await getCurrentUser();
   if (!user) return <p className="text-neutral-400">Sign in required.</p>;
@@ -27,14 +34,28 @@ export default async function PlaylistPage({
   // flips to "newest first".
   const order: Order = searchParams.order === "desc" ? "desc" : "asc";
   const since = searchParams.since ? new Date(searchParams.since) : null;
+  const requestedTake = Number(searchParams.take);
+  const take =
+    Number.isFinite(requestedTake) && requestedTake > 0
+      ? Math.min(Math.floor(requestedTake), MAX_TAKE)
+      : DEFAULT_TAKE;
 
-  const tracks = await prisma.track.findMany({
-    where: {
-      playlistId: playlist.id,
-      ...(since ? { firstSeenAt: { gte: since } } : {}),
-    },
-    orderBy: { addedAt: order },
-  });
+  const whereClause = {
+    playlistId: playlist.id,
+    ...(since ? { firstSeenAt: { gte: since } } : {}),
+  };
+
+  // Count and fetch in parallel so pagination UI can show "showing N
+  // of M" without a sequential round-trip.
+  const [tracks, totalMatching] = await Promise.all([
+    prisma.track.findMany({
+      where: whereClause,
+      orderBy: { addedAt: order },
+      take,
+    }),
+    prisma.track.count({ where: whereClause }),
+  ]);
+  const hasMore = totalMatching > tracks.length;
 
   const otherOrder: Order = order === "asc" ? "desc" : "asc";
   const orderLabel =
@@ -58,7 +79,9 @@ export default async function PlaylistPage({
         <div className="flex-1">
           <h1 className="text-xl font-semibold">{playlist.name}</h1>
           <p className="text-xs text-neutral-400">
-            {tracks.length} tracks
+            {hasMore
+              ? `Showing ${tracks.length} of ${totalMatching} tracks`
+              : `${tracks.length} tracks`}
             {playlist.ownerDisplayName ? ` · by ${playlist.ownerDisplayName}` : ""}
             {since ? ` · since ${formatDateJakarta(since)}` : ""}
           </p>
@@ -104,6 +127,16 @@ export default async function PlaylistPage({
           );
         })}
       </ul>
+      {hasMore && (
+        <div className="pt-2 text-center">
+          <Link
+            href={`/playlists/${playlist.id}?order=${order}&take=${Math.min(take + DEFAULT_TAKE, MAX_TAKE)}`}
+            className="inline-block rounded border border-neutral-800 px-4 py-2 text-xs text-neutral-400 hover:bg-neutral-900"
+          >
+            Load more ({totalMatching - tracks.length} remaining)
+          </Link>
+        </div>
+      )}
     </section>
   );
 }
