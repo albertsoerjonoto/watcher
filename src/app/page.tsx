@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { Track } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
 import { AddPlaylistForm } from "@/components/AddPlaylistForm";
@@ -44,14 +45,15 @@ export default async function DashboardPage() {
   });
   const playlistIds = playlists.map((p) => p.id);
 
-  // All recent tracks across every playlist in a single query,
-  // grouped in memory. The old code fanned out one findMany per
-  // playlist (N+1) which, on a 6-playlist dashboard, was six
-  // sequential round-trips on the transaction-pooled connection (we
-  // have connection_limit=1). Replacing that with a single
-  // `playlistId IN (...)` query + JS group-by cut dashboard load
-  // time by ~80% and — more importantly — is O(1) in round-trips
-  // regardless of how many playlists the user watches.
+  // Top-N-per-group via a single round-trip. We use a window function
+  // (ROW_NUMBER OVER PARTITION BY playlistId) so each playlist gets
+  // exactly RECENT_PER_PLAYLIST rows regardless of how active any
+  // other playlist is. A naive `findMany ... take: N * playlistCount`
+  // doesn't work because one very active playlist (e.g. Lalala with
+  // 119 recent tracks) eats the entire global take quota and starves
+  // every other playlist of recent rows on the dashboard. Asked Prisma
+  // for windowed top-N, it doesn't have it natively, so we drop to
+  // raw SQL — still O(1) round-trips, still grouped in memory below.
   const RECENT_PER_PLAYLIST = 5;
   const [weekCounts, lastErrors, allRecentTracks, hasPushSub] =
     await Promise.all([
@@ -78,15 +80,20 @@ export default async function DashboardPage() {
         distinct: ["playlistId"],
         select: { playlistId: true, error: true, startedAt: true },
       }),
-      // One query for all recent tracks across every playlist. We
-      // over-fetch a bit (RECENT_PER_PLAYLIST * playlistCount) and
-      // slice per-group in memory below. Still O(1) round-trips.
+      // Top RECENT_PER_PLAYLIST tracks per playlist via window function.
+      // Single query, single round-trip, exactly N rows per group.
       playlistIds.length > 0
-        ? prisma.track.findMany({
-            where: { playlistId: { in: playlistIds } },
-            orderBy: { addedAt: "desc" },
-            take: RECENT_PER_PLAYLIST * playlistIds.length,
-          })
+        ? prisma.$queryRaw<Track[]>(Prisma.sql`
+            SELECT * FROM (
+              SELECT t.*,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY "playlistId" ORDER BY "addedAt" DESC
+                     ) AS rn
+              FROM "Track" t
+              WHERE "playlistId" IN (${Prisma.join(playlistIds)})
+            ) ranked
+            WHERE rn <= ${RECENT_PER_PLAYLIST}
+          `)
         : Promise.resolve([] as Track[]),
       prisma.pushSubscription
         .count({ where: { userId: user.id } })
@@ -99,17 +106,17 @@ export default async function DashboardPage() {
   const errorByPlaylist = new Map(
     lastErrors.filter((r) => r.error).map((r) => [r.playlistId, r.error]),
   );
-  // Group the flat `allRecentTracks` result by playlistId, then cap
-  // each group at RECENT_PER_PLAYLIST. The DB already sorted by
-  // addedAt desc so the first N per group are the most recent.
+  // Group the windowed result by playlistId. The window function
+  // already capped each group at RECENT_PER_PLAYLIST; we just need
+  // to bucket by playlist id and ensure each bucket is sorted.
   const recentByPlaylist = new Map<string, Track[]>();
   for (const t of allRecentTracks) {
     const bucket = recentByPlaylist.get(t.playlistId);
-    if (bucket) {
-      if (bucket.length < RECENT_PER_PLAYLIST) bucket.push(t);
-    } else {
-      recentByPlaylist.set(t.playlistId, [t]);
-    }
+    if (bucket) bucket.push(t);
+    else recentByPlaylist.set(t.playlistId, [t]);
+  }
+  for (const bucket of recentByPlaylist.values()) {
+    bucket.sort((a, b) => b.addedAt.getTime() - a.addedAt.getTime());
   }
 
   // If any recent poll failed on token refresh, Spotify has revoked the
