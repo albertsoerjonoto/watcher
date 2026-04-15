@@ -99,6 +99,29 @@ async function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// Global rate-limit backoff. When any spotifyGet hits a 429, every
+// subsequent call in the same serverless instance short-circuits with
+// the same error until `rateLimitedUntil` elapses. Without this, a
+// rate-limited /api/refresh cycles through all five watched playlists
+// sequentially, each eating the full retry budget, each writing its
+// own "429" row to PollLog, and the dashboard lights up red for every
+// playlist simultaneously.
+let rateLimitedUntil = 0;
+
+function currentCooldownSeconds(): number {
+  const ms = rateLimitedUntil - Date.now();
+  return ms > 0 ? Math.ceil(ms / 1000) : 0;
+}
+
+function raiseRateLimited(): never {
+  const s = currentCooldownSeconds();
+  throw new SpotifyError(
+    429,
+    "cooldown",
+    `Spotify API error 429: Too many requests — retry after ${s}s`,
+  );
+}
+
 /**
  * Authed GET against Spotify with refresh-token rotation and Retry-After
  * handling. Retries 429 and 5xx up to 3 times.
@@ -107,6 +130,7 @@ export async function spotifyGet<T = unknown>(
   userIn: User,
   path: string,
 ): Promise<{ user: User; data: T }> {
+  if (currentCooldownSeconds() > 0) raiseRateLimited();
   let user = await ensureFreshToken(userIn);
   let attempt = 0;
   // eslint-disable-next-line no-constant-condition
@@ -128,19 +152,12 @@ export async function spotifyGet<T = unknown>(
       // fast and let the caller (AutoRefresh / retry endpoint) try
       // again on its own cadence.
       if (attempt > 1) {
-        // Surface the Retry-After cooldown in the error message so
-        // PollLog / the dashboard banner can tell the user how long
-        // until Spotify will accept another request. Spotify's
-        // Retry-After is in whole seconds.
-        const body = await res.text();
-        const suffix = Number.isFinite(retry) && retry > 0
-          ? ` — retry after ${retry}s`
-          : "";
-        throw new SpotifyError(
-          429,
-          body,
-          `Spotify API error 429: Too many requests${suffix}`,
-        );
+        // Set the global cooldown so every subsequent call in this
+        // instance bails fast until Spotify says we can try again.
+        const seconds = Number.isFinite(retry) && retry > 0 ? retry : 1;
+        rateLimitedUntil = Date.now() + seconds * 1000;
+        await res.text().catch(() => "");
+        raiseRateLimited();
       }
       await sleep(Math.min(retry, 5) * 1000);
       continue;

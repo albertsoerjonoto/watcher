@@ -102,6 +102,16 @@ export default async function DashboardPage() {
     e?.toLowerCase().includes("token refresh failed"),
   );
 
+  // Highest cooldown across all rate-limited polls — the dashboard
+  // shows this next to the sync badge so the user knows how long
+  // until Spotify will accept another request.
+  const cooldownSeconds = Array.from(errorByPlaylist.values())
+    .map((e) => {
+      const m = e?.match(/retry after (\d+)s/i);
+      return m ? Number(m[1]) : 0;
+    })
+    .reduce((a, b) => Math.max(a, b), 0);
+
   // Group playlists by owner — the dashboard answers the question
   // "what new tracks landed in playlists I care about", and that's
   // easier to scan when playlists from the same owner are visually
@@ -137,6 +147,14 @@ export default async function DashboardPage() {
           >
             Sign in with Spotify again
           </a>
+        </div>
+      )}
+
+      {cooldownSeconds > 0 && (
+        <div className="rounded-lg border border-amber-700/50 bg-amber-950/30 p-3 text-xs text-amber-200">
+          Spotify is rate-limiting us right now. Syncing will resume in
+          ~{cooldownSeconds}s. Existing tracks and dates aren&apos;t
+          affected.
         </div>
       )}
 
@@ -226,11 +244,14 @@ export default async function DashboardPage() {
                             </span>
                           )}
                         </div>
-                        {errorByPlaylist.get(p.id) && (
-                          <div className="mt-1 break-all rounded bg-red-950/60 px-2 py-1 font-mono text-[10px] text-red-300">
-                            {errorByPlaylist.get(p.id)}
-                          </div>
-                        )}
+                        {errorByPlaylist.get(p.id) && (() => {
+                          const msg = errorByPlaylist.get(p.id)!;
+                          const isRateLimited = msg.includes("429");
+                          const cls = isRateLimited
+                            ? "mt-1 break-all rounded bg-amber-950/60 px-2 py-1 font-mono text-[10px] text-amber-300"
+                            : "mt-1 break-all rounded bg-red-950/60 px-2 py-1 font-mono text-[10px] text-red-300";
+                          return <div className={cls}>{msg}</div>;
+                        })()}
                       </div>
                       {(weekByPlaylist.get(p.id) ?? 0) > 0 && (
                         <span className="shrink-0 rounded-full bg-spotify/20 px-2 py-1 text-xs text-spotify">

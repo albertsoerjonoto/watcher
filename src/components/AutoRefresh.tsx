@@ -17,7 +17,8 @@ type SyncState =
   | { kind: "idle" }
   | { kind: "syncing" }
   | { kind: "ok"; new: number; at: number }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string }
+  | { kind: "rateLimited"; message: string };
 
 interface RefreshResponse {
   results?: { newTracks: number; error?: string }[];
@@ -50,9 +51,18 @@ export function AutoRefresh() {
       const body = (await res.json()) as RefreshResponse;
       const totalNew =
         body.results?.reduce((acc, r) => acc + (r.newTracks ?? 0), 0) ?? 0;
-      const firstError = body.results?.find((r) => r.error)?.error;
-      if (firstError) {
-        setState({ kind: "error", message: firstError });
+      const allErrors = body.results?.filter((r) => r.error) ?? [];
+      const firstRealError = allErrors.find(
+        (r) => !r.error?.includes("429"),
+      )?.error;
+      const firstRateLimit = allErrors[0]?.error;
+      if (firstRealError) {
+        setState({ kind: "error", message: firstRealError });
+      } else if (firstRateLimit && allErrors.length > 0) {
+        // Every poll in the batch rate-limited. Surface that
+        // distinctly so "sync error" red isn't alarming — it's not
+        // actually broken, just throttled.
+        setState({ kind: "rateLimited", message: firstRateLimit });
       } else {
         setState({ kind: "ok", new: totalNew, at: Date.now() });
       }
@@ -87,6 +97,10 @@ export function AutoRefresh() {
   } else if (state.kind === "ok") {
     dotClass = "bg-spotify";
     label = state.new > 0 ? `+${state.new} new` : "up to date";
+  } else if (state.kind === "rateLimited") {
+    dotClass = "bg-amber-500";
+    const m = state.message.match(/retry after (\d+)s/i);
+    label = m ? `rate limited · ${m[1]}s` : "rate limited";
   } else if (state.kind === "error") {
     dotClass = "bg-red-500";
     label = "sync error";
@@ -98,7 +112,11 @@ export function AutoRefresh() {
         type="button"
         onClick={() => run(true)}
         disabled={state.kind === "syncing"}
-        title={state.kind === "error" ? state.message : "Sync now"}
+        title={
+          state.kind === "error" || state.kind === "rateLimited"
+            ? state.message
+            : "Sync now"
+        }
         className="flex items-center gap-1.5 rounded border border-neutral-800 px-2 py-1 hover:bg-neutral-900 disabled:opacity-60"
       >
         <span

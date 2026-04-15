@@ -236,6 +236,30 @@ export async function pollPlaylist(
       });
     }
     const msg = err instanceof Error ? err.message : String(err);
+    // 429 is a transient, app-wide condition: the same cooldown
+    // message hits every playlist in a single /api/refresh cycle. We
+    // still want the user to see the cooldown on the dashboard, but
+    // we don't want five identical red error rows, and we don't want
+    // the error to persist once Spotify unblocks us. Collapse 429s
+    // into a short-lived PollLog row and leave `lastCheckedAt` alone
+    // so the snapshot short-circuit takes over on the next good call.
+    if (status === 429) {
+      await prisma.pollLog.create({
+        data: {
+          playlistId: playlist.id,
+          durationMs: Date.now() - startedAt,
+          newTracks: 0,
+          error: msg.slice(0, 200),
+        },
+      });
+      return {
+        playlistId: playlist.id,
+        skipped: true,
+        newTracks: 0,
+        notified: 0,
+        error: msg,
+      };
+    }
     await prisma.pollLog.create({
       data: {
         playlistId: playlist.id,
