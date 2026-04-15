@@ -348,19 +348,23 @@ export async function fetchAllPlaylistTracks(
     }
 
     if (!page) {
-      // All Web API fallbacks failed. If metadata explicitly said total=0,
-      // this is a legitimate empty playlist.
+      // All user-token Web API fallbacks failed. If metadata explicitly
+      // said total=0, this is a legitimate empty playlist.
       if (metaTotal === 0) {
         return { user, tracks: out };
       }
-      // Otherwise Spotify has blocked every Web API path to the tracks.
-      // Last resort: parse the server-rendered JSON from the public embed
-      // page (open.spotify.com/embed/playlist/{id}), which bypasses the
-      // Web API entirely. The embed page caps at ~100 tracks and lacks
-      // `addedAt` + album metadata — we enrich the album data via the
-      // `/v1/tracks?ids=` catalog endpoint (which works on user tokens
-      // even when playlist-track endpoints don't) and use a synthetic
-      // stable addedAt = epoch so diffs are idempotent.
+      // Tier 1 fallback: Client Credentials (app token). Separate quota
+      // pool from the user token and often succeeds where user-scoped
+      // calls don't. Only works if SPOTIFY_CLIENT_SECRET is configured.
+      const appTracks = await fetchAllTracksWithAppToken(playlistId);
+      if (appTracks && appTracks.length > 0) {
+        return { user, tracks: appTracks };
+      }
+      // Tier 2 fallback: scrape the public embed page's __NEXT_DATA__.
+      // Caps at ~100 tracks and has no real `addedAt` — we enrich album
+      // metadata via /v1/tracks?ids= (catalog endpoint works on user
+      // tokens even when playlist-track endpoints don't) and synthesize
+      // a stable addedAt = epoch so diffs stay idempotent.
       const embedResult = await fetchEmbedTracks(user, playlistId);
       user = embedResult.user;
       if (embedResult.tracks.length === 0) {
@@ -370,7 +374,7 @@ export async function fetchAllPlaylistTracks(
         throw new SpotifyError(
           403,
           first.data,
-          `Spotify blocked track access for this playlist. Web API /items + /tracks returned ${statusStr}, and the embed fallback returned no tracks either.`,
+          `Spotify blocked track access for this playlist. Web API /items + /tracks returned ${statusStr}, Client Credentials fallback ${process.env.SPOTIFY_CLIENT_SECRET ? "also failed" : "unavailable (SPOTIFY_CLIENT_SECRET not set)"}, and the embed fallback returned no tracks either.`,
         );
       }
       return { user, tracks: embedResult.tracks };
@@ -453,6 +457,102 @@ export async function fetchAllPlaylistTracks(
   }
 
   return { user, tracks: out };
+}
+
+// --- Client Credentials token for public-catalog access.
+//
+// When SPOTIFY_CLIENT_SECRET is configured, we can request an
+// app-scoped bearer token and use it as an alternate fallback for
+// playlists that 403 on the user token. App tokens have a separate
+// quota pool from the user token and are not subject to user-scope
+// restrictions, so they sometimes succeed where the user token fails
+// on public playlists.
+
+let cachedAppToken: { token: string; expiresAt: number } | null = null;
+
+async function getAppToken(): Promise<string | null> {
+  const clientId = process.env.SPOTIFY_CLIENT_ID;
+  const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
+  if (!clientId || !clientSecret) return null;
+  if (cachedAppToken && cachedAppToken.expiresAt > Date.now() + 30_000) {
+    return cachedAppToken.token;
+  }
+  const basic = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+  const res = await fetch(`${ACCOUNTS}/api/token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: `Basic ${basic}`,
+    },
+    body: "grant_type=client_credentials",
+  });
+  if (!res.ok) return null;
+  const json = (await res.json()) as { access_token: string; expires_in: number };
+  cachedAppToken = {
+    token: json.access_token,
+    expiresAt: Date.now() + json.expires_in * 1000,
+  };
+  return json.access_token;
+}
+
+async function appTokenGet<T>(path: string): Promise<T | null> {
+  const tok = await getAppToken();
+  if (!tok) return null;
+  const res = await fetch(`${API}${path}`, {
+    headers: { Authorization: `Bearer ${tok}` },
+  });
+  if (!res.ok) return null;
+  return (await res.json()) as T;
+}
+
+/**
+ * Fetch all tracks of a playlist via the Client Credentials (app token)
+ * flow. Returns null if app token is unavailable or if Spotify also
+ * blocks the app token on this playlist.
+ */
+async function fetchAllTracksWithAppToken(
+  playlistId: string,
+): Promise<TrackKeyed[] | null> {
+  const tok = await getAppToken();
+  if (!tok) return null;
+
+  const all: TrackKeyed[] = [];
+  const doFetch = async (path: string) => {
+    const res = await fetch(`${API}${path}`, {
+      headers: { Authorization: `Bearer ${tok}` },
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as unknown;
+  };
+
+  // Try /tracks first, then /items. If the first page 403s on both,
+  // bail out.
+  let nextPath: string | null =
+    `/playlists/${playlistId}/tracks?limit=100&offset=0`;
+  let firstOk = false;
+  while (nextPath) {
+    const data: unknown = await doFetch(nextPath);
+    if (!data) {
+      if (!firstOk) {
+        // Try /items as a shape variant on the first fetch.
+        const alt = await doFetch(`/playlists/${playlistId}/items?limit=100&offset=0`);
+        if (!alt) return null;
+        const page = extractTracksPage(alt);
+        if (!page) return null;
+        firstOk = true;
+        normalizeItems(page.items, all);
+        nextPath = page.next ? page.next.replace(API, "") : null;
+        continue;
+      }
+      break;
+    }
+    const page = extractTracksPage(data);
+    if (!page) break;
+    firstOk = true;
+    normalizeItems(page.items, all);
+    nextPath = page.next ? page.next.replace(API, "") : null;
+  }
+  return all.length > 0 ? all : null;
 }
 
 // --- Embed-based fallback for playlists where Spotify blocks the Web
