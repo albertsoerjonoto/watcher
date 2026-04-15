@@ -288,38 +288,81 @@ export async function fetchAllPlaylistTracks(
   );
 
   let user = first.user;
+  const out: TrackKeyed[] = [];
   const initialPage = extractTracksPage(first.data);
-  if (!initialPage) {
-    // Maximally informative error: top-level keys, plus type and
-    // nested-keys of both `tracks` and `items` if present. This tells
-    // me exactly what shape Spotify returned so no more guessing.
-    const d =
-      first.data && typeof first.data === "object"
-        ? (first.data as Record<string, unknown>)
-        : {};
-    const keys = Object.keys(d).join(",");
-    const describe = (k: string): string => {
-      const v = d[k];
-      if (v === undefined) return `${k}=absent`;
-      if (v === null) return `${k}=null`;
-      if (Array.isArray(v)) return `${k}=array[${v.length}]`;
-      if (typeof v === "object") {
-        const inner = Object.keys(v as Record<string, unknown>).join(",");
-        return `${k}=object{${inner}}`;
-      }
-      return `${k}=${typeof v}`;
-    };
-    throw new SpotifyError(
-      0,
-      first.data,
-      `no tracks field. top=[${keys}] ${describe("tracks")} ${describe("items")}`,
-    );
+
+  // Infer total from either the paging wrapper or the playlist metadata's
+  // `tracks.total` scalar — Spotify sometimes returns the latter even when
+  // it omits the paging wrapper entirely.
+  function inferTotal(d: unknown): number | null {
+    if (!d || typeof d !== "object") return null;
+    const o = d as Record<string, unknown>;
+    const t = o.tracks;
+    if (t && typeof t === "object" && "total" in (t as Record<string, unknown>)) {
+      const n = (t as Record<string, unknown>).total;
+      if (typeof n === "number") return n;
+    }
+    return null;
   }
 
-  const out: TrackKeyed[] = [];
-  let page: SpotifyTracksPage = initialPage;
-  normalizeItems(page.items, out);
-  const total = page.total;
+  let total = 0;
+  let page: SpotifyTracksPage | null = initialPage;
+  if (page) {
+    normalizeItems(page.items, out);
+    total = page.total;
+  } else {
+    // Shape 4: Spotify returned a playlist object with no embedded tracks
+    // at all — not even an empty `items` array. Fall back to the dedicated
+    // track-listing endpoints. We try `/items` (current) then `/tracks`
+    // (legacy). Any 403/404/empty means "nothing more to fetch" — we
+    // accept that and continue with what we have.
+    const fallbackTotal = inferTotal(first.data) ?? 0;
+    total = fallbackTotal;
+    const endpoints = [
+      `/playlists/${playlistId}/items?limit=100`,
+      `/playlists/${playlistId}/tracks?limit=100`,
+    ];
+    for (const ep of endpoints) {
+      try {
+        const resp = await spotifyGet<unknown>(user, ep);
+        user = resp.user;
+        const p = extractTracksPage(resp.data);
+        if (!p) continue;
+        page = p;
+        normalizeItems(p.items, out);
+        // Trust the paging wrapper's total if we got one.
+        if (p.total) total = Math.max(total, p.total);
+        break;
+      } catch (err) {
+        if (
+          err instanceof SpotifyError &&
+          (err.status === 403 || err.status === 404)
+        ) {
+          continue;
+        }
+        throw err;
+      }
+    }
+    // If every fallback failed AND the playlist metadata told us total=0,
+    // that's the legitimate "empty playlist" case — return gracefully.
+    // If total>0 and we got nothing, surface a more helpful error.
+    if (!page && total > 0) {
+      const d =
+        first.data && typeof first.data === "object"
+          ? (first.data as Record<string, unknown>)
+          : {};
+      const keys = Object.keys(d).join(",");
+      throw new SpotifyError(
+        0,
+        first.data,
+        `no tracks field and dedicated endpoints returned no data. total=${total} top=[${keys}]`,
+      );
+    }
+    if (!page) {
+      // Empty playlist — no tracks to return.
+      return { user, tracks: out };
+    }
+  }
 
   // Pagination. Spotify's behavior here is flaky — the dedicated
   // `/playlists/{id}/tracks` endpoint returns 403 on some accounts, and
