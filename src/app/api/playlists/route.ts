@@ -3,7 +3,6 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
 import { fetchPlaylistMeta, parsePlaylistId } from "@/lib/spotify";
-import { pollPlaylist } from "@/lib/poll";
 
 export async function GET() {
   const user = await getCurrentUser();
@@ -80,9 +79,12 @@ export async function POST(request: Request) {
     },
   });
 
-  // Seed tracks synchronously. snapshotId is null on first run → pollPlaylist
-  // will persist rows but *not* send notifications (isFirstSeed guard).
-  await pollPlaylist(user, playlist);
-
+  // Do NOT seed tracks here. Pathfinder-fallback playlists can take
+  // 10–30s to fully fetch, and a large playlist exceeds Vercel's 60s
+  // function timeout entirely. Instead, return immediately with the
+  // bare playlist row (0 tracks) so the UI renders the new card
+  // instantly. The client fires `/api/playlists/:id/retry` in the
+  // background to seed tracks; the dashboard's AutoRefresh picks up
+  // the new rows on its next tick.
   return NextResponse.json({ playlist });
 }

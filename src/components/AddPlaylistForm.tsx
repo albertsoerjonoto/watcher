@@ -23,8 +23,22 @@ export function AddPlaylistForm() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "Failed to add playlist");
       }
+      const body = (await res.json()) as {
+        playlist?: { id?: string };
+      };
       setUrl("");
       router.refresh();
+      // Kick off track seeding in the background. The server returns
+      // fast without seeding (pathfinder fallback can take longer than
+      // Vercel's 60s function budget for large playlists), so we fire
+      // the retry endpoint here and let it populate rows; AutoRefresh
+      // will reveal them on its next tick.
+      const newId = body.playlist?.id;
+      if (newId) {
+        fetch(`/api/playlists/${newId}/retry`, { method: "POST" })
+          .then(() => router.refresh())
+          .catch(() => {});
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed");
     } finally {
