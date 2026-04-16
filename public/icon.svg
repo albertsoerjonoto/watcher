@@ -1,7 +1,3 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#0b0b0b"/>
-  <circle cx="256" cy="256" r="160" fill="#1DB954"/>
-  <path d="M180 220 Q256 180 332 220" stroke="#0b0b0b" stroke-width="22" fill="none" stroke-linecap="round"/>
-  <path d="M190 270 Q256 236 322 270" stroke="#0b0b0b" stroke-width="18" fill="none" stroke-linecap="round"/>
-  <path d="M200 316 Q256 288 312 316" stroke="#0b0b0b" stroke-width="14" fill="none" stroke-linecap="round"/>
+  <text x="256" y="410" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-weight="700" font-size="460" fill="#1DB954">W</text>
 </svg>
