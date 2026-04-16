@@ -6,16 +6,16 @@ const TZ = "Asia/Jakarta";
 
 const dateFmt = new Intl.DateTimeFormat("en-GB", {
   timeZone: TZ,
+  weekday: "short",
   day: "2-digit",
   month: "short",
-  year: "numeric",
 });
 
 const dateTimeFmt = new Intl.DateTimeFormat("en-GB", {
   timeZone: TZ,
+  weekday: "short",
   day: "2-digit",
   month: "short",
-  year: "numeric",
   hour: "2-digit",
   minute: "2-digit",
   hour12: false,
@@ -41,7 +41,7 @@ export function formatDateTimeJakarta(
   if (!d) return "—";
   const date = d instanceof Date ? d : new Date(d);
   if (isNaN(date.getTime())) return "—";
-  return dateTimeFmt.format(date);
+  return dateTimeFmt.format(date).replace(",", "").replace(":", ".");
 }
 
 // YYYY-MM-DD in Jakarta TZ — used as a stable group key in the feed.

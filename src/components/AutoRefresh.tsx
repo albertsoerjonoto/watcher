@@ -50,6 +50,10 @@ export function AutoRefresh() {
     try {
       const statusRes = await fetch("/api/sync-status", { cache: "no-store" });
       if (!statusRes.ok) {
+        if (statusRes.status === 401) {
+          setState({ kind: "idle" });
+          return;
+        }
         setState({ kind: "error", message: `status ${statusRes.status}` });
         return;
       }
@@ -152,26 +156,26 @@ export function AutoRefresh() {
     label = "sync error";
   }
 
+  if (state.kind === "idle") return null;
+
   return (
-    <div className="flex items-center gap-2 text-[10px] text-neutral-500">
-      <button
-        type="button"
-        onClick={() => run(true)}
-        disabled={disabled}
-        title={
-          state.kind === "error"
-            ? state.message
-            : state.kind === "rateLimited"
-              ? `Spotify rate-limited — retry in ${state.secondsRemaining}s`
-              : "Sync now"
-        }
-        className="flex items-center gap-1.5 rounded border border-neutral-800 px-2 py-1 hover:bg-neutral-900 disabled:opacity-60"
-      >
-        <span
-          className={`inline-block h-1.5 w-1.5 rounded-full ${dotClass}`}
-        />
-        {label}
-      </button>
-    </div>
+    <button
+      type="button"
+      onClick={() => run(true)}
+      disabled={disabled}
+      title={
+        state.kind === "error"
+          ? state.message
+          : state.kind === "rateLimited"
+            ? `Spotify rate-limited — retry in ${state.secondsRemaining}s`
+            : "Sync now"
+      }
+      className="flex items-center gap-1.5 rounded border border-neutral-800 px-2 py-1 text-[10px] text-neutral-500 hover:bg-neutral-900 disabled:opacity-60"
+    >
+      <span
+        className={`inline-block h-1.5 w-1.5 rounded-full ${dotClass}`}
+      />
+      {label}
+    </button>
   );
 }
