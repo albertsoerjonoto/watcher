@@ -6,7 +6,7 @@ are added. Filters out self-additions. PWA-first, deployed on Vercel.
 ## Tech Stack
 
 - **Framework:** Next.js 14 (App Router), TypeScript
-- **Database:** PostgreSQL via Prisma ORM (Supabase)
+- **Database:** PostgreSQL via Prisma ORM (Neon)
 - **Auth:** Spotify OAuth 2.0 with PKCE (no client secret required)
 - **Notifications:** Web Push (web-push library, VAPID)
 - **Styling:** Tailwind CSS (dark theme)

@@ -5,35 +5,24 @@ working. I can't click the buttons for you — they're all tied to your
 personal accounts — but everything in this repo is already configured for
 this path.
 
-Target stack: **Vercel** (hosting + cron) + **Supabase** (free Postgres) +
+Target stack: **Vercel** (hosting + cron) + **Neon** (free serverless Postgres) +
 your existing **Spotify Developer** app.
 
-Time: ~10 minutes end-to-end, assuming GitHub, Vercel, and Supabase
+Time: ~10 minutes end-to-end, assuming GitHub, Vercel, and Neon
 accounts are already logged in.
 
 ---
 
-## 1. Create a Supabase Postgres database
+## 1. Create a Neon Postgres database
 
-1. Go to <https://supabase.com/dashboard> → **New project**.
-2. Pick a region close to you, set a **Database Password** (save it —
-   you'll paste it in the next step), wait ~1 min for it to provision.
-3. Once it's up, click **`Connect`** at the top of the project page.
-4. Pick **Session pooler** — port `5432`. Language = `URI`.
-   Do *not* use Transaction pooler (port 6543) — PgBouncer in transaction
-   mode breaks Prisma's `db push`/`migrate` because they need
-   session-level DDL. Session pooler works for both runtime and
-   migrations and is more than fine for a single-user app.
-5. The template looks like:
+1. Go to <https://neon.tech> → sign up (GitHub OAuth works) → **New Project**.
+2. Name it `watcher`, pick a region close to your Vercel deployment.
+3. Once created, copy the **connection string** from the dashboard.
+   It looks like:
 
    ```
-   postgresql://postgres.<project-ref>:[YOUR-PASSWORD]@aws-1-<region>.pooler.supabase.com:5432/postgres
+   postgresql://[user]:[password]@[endpoint].neon.tech/neondb?sslmode=require
    ```
-
-   Replace `[YOUR-PASSWORD]` with the password you set in step 2.
-
-   > **Tip:** pick a password that's only letters + digits. Special
-   > characters like `@ : / # ?` break URL parsing unless URL-encoded.
 
    Keep this tab open — you'll paste this into Vercel in a moment.
 
@@ -58,7 +47,7 @@ accounts are already logged in.
    | `SPOTIFY_REDIRECT_URI` | `https://<will-fill-after-deploy>/api/auth/callback` |
    | `APP_BASE_URL` | `https://<will-fill-after-deploy>` |
    | `SESSION_SECRET` | `T7T9YFabQiqjE8gDK0DC74ZUmdFg-IKKKMc-FInmVHA` |
-   | `DATABASE_URL` | *(Supabase session pooler string from step 1, port 5432, no query params)* |
+   | `DATABASE_URL` | *(Neon connection string from step 1)* |
    | `CRON_SECRET` | `1Xabh5Se7O5tFirfC6joj56u4OjYQY0GFD5wEOP9XFk` |
    | `VAPID_PUBLIC_KEY` | `BNHedM6mhEotKGY60tb_4qJZ5sbd_8NE0HKe0epaTsSwy1qgDUJDujr58TjmEpWJg1ZxlVur3LckvP9VniYJhlA` |
    | `VAPID_PRIVATE_KEY` | `cTu0SBHSkU1pS1eSIokMQzkhcrZGkGpn4SplDi_4FTE` |
@@ -69,7 +58,7 @@ accounts are already logged in.
    > for now — you'll update them in step 4 once Vercel assigns a URL.
 
 5. Click **Deploy**. Wait ~90 seconds. The build runs `prisma db push`
-   against Supabase so your tables get created automatically on the
+   against Neon so your tables get created automatically on the
    first deploy.
 
 ---
@@ -148,21 +137,15 @@ Spotify dashboard aren't byte-identical. Trailing slash, http vs https,
 a typo in the hostname — all count.
 
 **Build fails with `Error: P1001: Can't reach database server`**
-→ The Supabase connection string is wrong. Most common causes:
-1. You forgot to replace `[YOUR-PASSWORD]` with your actual password.
-2. Your password contains URL-unsafe characters (`@`, `:`, `/`, `#`,
-   `?`). URL-encode them or set a password that's only alphanumerics.
-3. Supabase project was paused / deleted.
-
-**Build hangs indefinitely on `prisma db push`**
-→ You used the Transaction pooler (port 6543). Prisma DDL doesn't work
-through PgBouncer transaction mode — it looks like a hang because the
-prepared statements never get a reply. Switch `DATABASE_URL` to the
-Session pooler (port 5432) with no query params, redeploy.
+→ The Neon connection string is wrong. Most common causes:
+1. The connection string was copy-pasted incorrectly.
+2. The Neon project was suspended (free tier auto-suspends after 5 min
+   of inactivity, but wakes on connection — just retry the build).
+3. `sslmode=require` is missing from the connection string.
 
 **Build fails with `prisma db push` saying drift detected**
 → Someone (you? a previous deploy?) modified the DB schema out-of-band.
-Safe fix: in Supabase → SQL Editor, run `DROP SCHEMA public CASCADE;
+Safe fix: in the Neon SQL Editor, run `DROP SCHEMA public CASCADE;
 CREATE SCHEMA public;`, then redeploy.
 
 **Notifications don't arrive on iPhone**
@@ -185,7 +168,7 @@ CREATE SCHEMA public;`, then redeploy.
 ## What lives where
 
 - **Code** — this repo, branch `main`
-- **DB** — Supabase (Postgres, free tier)
+- **DB** — Neon (serverless Postgres, free tier)
 - **Host + cron** — Vercel (`vercel.json` defines `*/10 * * * *`)
 - **Auth** — Spotify Developer app (`Claude Code Testing`)
 - **Push** — VAPID keys in Vercel env + service worker in

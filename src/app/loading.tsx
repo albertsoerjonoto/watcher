@@ -1,6 +1,6 @@
 // Instant skeleton for the dashboard. Without a loading boundary,
 // every navigation to "/" blocks on the full RSC payload (auth +
-// 4 DB roundtrips through the Supabase txn pooler) before the browser
+// 4 DB roundtrips through the connection pooler) before the browser
 // repaints anything — that's the 2-5s lag the user reported when
 // switching between Dashboard / Feed / Settings. With this file
 // present Next paints the skeleton immediately on click and streams

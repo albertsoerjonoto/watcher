@@ -200,7 +200,7 @@ export async function assertCanCallSpotify(): Promise<void> {
   }
 
   // Layer 2: cross-instance minimum interval. One DB read per call —
-  // adds ~50ms via the Supabase pooler, acceptable given we fire
+  // adds ~50ms via the DB pooler, acceptable given we fire
   // maybe a dozen Spotify calls per cron tick.
   const last = await readLastCallAt();
   const sinceLast = now - last;

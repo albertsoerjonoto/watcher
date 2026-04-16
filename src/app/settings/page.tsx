@@ -9,7 +9,7 @@ export default async function SettingsPage() {
   const user = await getCurrentUser();
   if (!user) return <p className="text-neutral-400">Sign in required.</p>;
   // Parallel fan-out — these were sequential, which forced an extra
-  // round-trip through the Supabase txn pooler on every Settings nav
+  // round-trip through the DB connection pooler on every Settings nav
   // and contributed to the multi-second tab-switch lag.
   const [playlists, subCount] = await Promise.all([
     prisma.playlist.findMany({
