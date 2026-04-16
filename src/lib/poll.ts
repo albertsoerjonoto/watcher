@@ -182,18 +182,25 @@ export async function pollPlaylist(
 
     const isFirstSeed = !playlist.snapshotId;
     let notified = 0;
-    if (!isFirstSeed && playlist.notifyEnabled) {
-      for (const t of added) {
-        const artistStr = t.artists.join(", ");
-        const { sent } = await sendPushToUser(user.id, {
-          title: `New in ${meta.data.name}`,
-          body: `${t.title} — ${artistStr}`,
-          playlistId: playlist.spotifyId,
-          trackId: t.spotifyTrackId,
-          url: `https://open.spotify.com/track/${t.spotifyTrackId}`,
-        });
-        if (sent > 0) notified++;
+    if (!isFirstSeed && playlist.notifyEnabled && added.length > 0) {
+      const MAX_SHOWN = 3;
+      const lines = added
+        .slice(0, MAX_SHOWN)
+        .map((t) => `${t.title} — ${t.artists.join(", ")}`);
+      if (added.length > MAX_SHOWN) {
+        lines.push(`+ ${added.length - MAX_SHOWN} more`);
       }
+      const url =
+        added.length === 1
+          ? `https://open.spotify.com/track/${added[0].spotifyTrackId}`
+          : `https://open.spotify.com/playlist/${playlist.spotifyId}`;
+      const { sent } = await sendPushToUser(user.id, {
+        title: `New in ${meta.data.name}`,
+        body: lines.join("\n"),
+        playlistId: playlist.spotifyId,
+        url,
+      });
+      if (sent > 0) notified++;
     }
 
     await prisma.playlist.update({

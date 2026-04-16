@@ -19,7 +19,6 @@ export interface PushPayload {
   body: string;
   url?: string;
   playlistId?: string;
-  trackId?: string;
 }
 
 /**
