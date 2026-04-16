@@ -18,8 +18,6 @@ import type {
 
 export const dynamic = "force-dynamic";
 
-const RECENT_PER_PLAYLIST = 5;
-
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "unauth" }, { status: 401 });
@@ -61,15 +59,11 @@ export async function GET() {
               addedAt: Date;
             }[]
           >(Prisma.sql`
-            SELECT * FROM (
-              SELECT t.*,
-                     ROW_NUMBER() OVER (
-                       PARTITION BY "playlistId" ORDER BY "addedAt" DESC
-                     ) AS rn
-              FROM "Track" t
-              WHERE "playlistId" IN (${Prisma.join(playlistIds)})
-            ) ranked
-            WHERE rn <= ${RECENT_PER_PLAYLIST}
+            SELECT t.*
+            FROM "Track" t
+            WHERE "playlistId" IN (${Prisma.join(playlistIds)})
+              AND "addedAt" >= ${since}
+            ORDER BY "addedAt" DESC
           `)
         : Promise.resolve([]),
       prisma.pushSubscription

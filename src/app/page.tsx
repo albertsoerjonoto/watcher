@@ -40,7 +40,6 @@ export default async function DashboardPage() {
   });
   const playlistIds = playlists.map((p) => p.id);
 
-  const RECENT_PER_PLAYLIST = 5;
   const [weekCounts, lastErrors, allRecentTracks, hasPushSub] =
     await Promise.all([
       prisma.track.groupBy({
@@ -70,15 +69,11 @@ export default async function DashboardPage() {
               addedAt: Date;
             }[]
           >(Prisma.sql`
-            SELECT * FROM (
-              SELECT t.*,
-                     ROW_NUMBER() OVER (
-                       PARTITION BY "playlistId" ORDER BY "addedAt" DESC
-                     ) AS rn
-              FROM "Track" t
-              WHERE "playlistId" IN (${Prisma.join(playlistIds)})
-            ) ranked
-            WHERE rn <= ${RECENT_PER_PLAYLIST}
+            SELECT t.*
+            FROM "Track" t
+            WHERE "playlistId" IN (${Prisma.join(playlistIds)})
+              AND "addedAt" >= ${since}
+            ORDER BY "addedAt" DESC
           `)
         : Promise.resolve([]),
       prisma.pushSubscription
