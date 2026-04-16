@@ -53,7 +53,7 @@ export async function exchangeCodeForTokens(params: {
     client_id: process.env.SPOTIFY_CLIENT_ID!,
     code_verifier: params.codeVerifier,
   });
-  const res = await fetch(`${ACCOUNTS}/api/token`, {
+  const res = await spotifyFetch(`${ACCOUNTS}/api/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
@@ -61,7 +61,7 @@ export async function exchangeCodeForTokens(params: {
   if (!res.ok) {
     throw new SpotifyError(res.status, await res.text(), "Token exchange failed");
   }
-  return res.json();
+  return res.json<SpotifyTokenResponse>();
 }
 
 async function refreshAccessToken(user: User): Promise<User> {
@@ -70,7 +70,7 @@ async function refreshAccessToken(user: User): Promise<User> {
     refresh_token: user.refreshToken,
     client_id: process.env.SPOTIFY_CLIENT_ID!,
   });
-  const res = await fetch(`${ACCOUNTS}/api/token`, {
+  const res = await spotifyFetch(`${ACCOUNTS}/api/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
@@ -78,7 +78,7 @@ async function refreshAccessToken(user: User): Promise<User> {
   if (!res.ok) {
     throw new SpotifyError(res.status, await res.text(), "Token refresh failed");
   }
-  const json = (await res.json()) as SpotifyTokenResponse;
+  const json = await res.json<SpotifyTokenResponse>();
   return prisma.user.update({
     where: { id: user.id },
     data: {
@@ -100,78 +100,52 @@ async function sleep(ms: number) {
 }
 
 // Rate-limit prevention lives in `./rate-limit` — see the post-mortem
-// there. This module just has to honor three rules:
-//
-//   1. Call assertCanCallSpotify() BEFORE every outgoing request.
-//   2. Call recordSpotifyCall() after it returns (success or 429).
-//   3. On 429 response, call recordRateLimited(retryAfter) and throw
-//      immediately. Do NOT retry. Do NOT fall through to a different
-//      endpoint (Pathfinder, embed, etc.) — they all share the same
-//      per-account / per-IP bucket and escalate the penalty.
-import {
-  assertCanCallSpotify,
-  recordSpotifyCall,
-  recordRateLimited,
-  SpotifyRateLimitError,
-} from "./rate-limit";
+// there. Every outgoing Spotify request MUST use spotifyFetch() which
+// gates (cooldown + budget + interval), records the call, and handles
+// 429 automatically. No raw fetch() to any Spotify host is permitted
+// anywhere in this file.
+import { spotifyFetch, SpotifyRateLimitError } from "./rate-limit";
 
 /**
- * Authed GET against Spotify with refresh-token rotation and Retry-After
- * handling. Does NOT retry 429 — we fail fast and let the scheduled
- * caller (cron, AutoRefresh stale check) try again after the cooldown.
+ * Authed GET against Spotify with refresh-token rotation and 5xx retry.
+ * Rate-limit gating, call recording, and 429 handling are all inside
+ * spotifyFetch — this function just adds auth and token refresh.
  */
 export async function spotifyGet<T = unknown>(
   userIn: User,
   path: string,
 ): Promise<{ user: User; data: T }> {
-  // Gate 1: cross-instance cooldown + rolling-30s budget. Throws
-  // SpotifyRateLimitError without touching the network if either
-  // fails. Re-thrown as SpotifyError(429) below so all callers see
-  // the same shape.
   try {
-    await assertCanCallSpotify();
+    let user = await ensureFreshToken(userIn);
+    let attempt = 0;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      attempt++;
+      const res = await spotifyFetch(`${API}${path}`, {
+        headers: { Authorization: `Bearer ${user.accessToken}` },
+      });
+      if (res.status === 401 && attempt === 1) {
+        user = await refreshAccessToken(user);
+        continue;
+      }
+      // 429 is handled by spotifyFetch (throws SpotifyRateLimitError).
+      if (res.status >= 500 && attempt < 3) {
+        await sleep(500 * attempt);
+        continue;
+      }
+      if (!res.ok) {
+        throw new SpotifyError(res.status, await res.text());
+      }
+      return { user, data: await res.json<T>() };
+    }
   } catch (e) {
+    // Convert SpotifyRateLimitError to SpotifyError(429) so all callers
+    // see the same error shape regardless of whether the block came from
+    // the gate or a real 429 response.
     if (e instanceof SpotifyRateLimitError) {
       throw new SpotifyError(429, "cooldown", e.message);
     }
     throw e;
-  }
-  let user = await ensureFreshToken(userIn);
-  let attempt = 0;
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    attempt++;
-    recordSpotifyCall();
-    const res = await fetch(`${API}${path}`, {
-      headers: { Authorization: `Bearer ${user.accessToken}` },
-    });
-    if (res.status === 401 && attempt === 1) {
-      user = await refreshAccessToken(user);
-      continue;
-    }
-    if (res.status === 429) {
-      const retry = Number(res.headers.get("retry-after") ?? "1");
-      // Persist the cooldown to AppState so a fresh lambda on the
-      // next request sees it. This is the critical fix: previously
-      // the cooldown lived in-memory and a new instance would happily
-      // fire another request 200ms later, re-arming the rolling
-      // window. See `src/lib/rate-limit.ts` for the post-mortem.
-      await recordRateLimited(retry);
-      await res.text().catch(() => "");
-      throw new SpotifyError(
-        429,
-        "cooldown",
-        `Spotify API error 429: Too many requests — retry after ${Math.max(1, Math.ceil(retry))}s`,
-      );
-    }
-    if (res.status >= 500 && attempt < 3) {
-      await sleep(500 * attempt);
-      continue;
-    }
-    if (!res.ok) {
-      throw new SpotifyError(res.status, await res.text());
-    }
-    return { user, data: (await res.json()) as T };
   }
 }
 
@@ -525,31 +499,41 @@ async function getAppToken(): Promise<string | null> {
     return cachedAppToken.token;
   }
   const basic = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
-  const res = await fetch(`${ACCOUNTS}/api/token`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Authorization: `Basic ${basic}`,
-    },
-    body: "grant_type=client_credentials",
-  });
-  if (!res.ok) return null;
-  const json = (await res.json()) as { access_token: string; expires_in: number };
-  cachedAppToken = {
-    token: json.access_token,
-    expiresAt: Date.now() + json.expires_in * 1000,
-  };
-  return json.access_token;
+  try {
+    const res = await spotifyFetch(`${ACCOUNTS}/api/token`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: `Basic ${basic}`,
+      },
+      body: "grant_type=client_credentials",
+    });
+    if (!res.ok) return null;
+    const json = await res.json<{ access_token: string; expires_in: number }>();
+    cachedAppToken = {
+      token: json.access_token,
+      expiresAt: Date.now() + json.expires_in * 1000,
+    };
+    return json.access_token;
+  } catch (e) {
+    if (e instanceof SpotifyRateLimitError) return null;
+    throw e;
+  }
 }
 
 async function appTokenGet<T>(path: string): Promise<T | null> {
   const tok = await getAppToken();
   if (!tok) return null;
-  const res = await fetch(`${API}${path}`, {
-    headers: { Authorization: `Bearer ${tok}` },
-  });
-  if (!res.ok) return null;
-  return (await res.json()) as T;
+  try {
+    const res = await spotifyFetch(`${API}${path}`, {
+      headers: { Authorization: `Bearer ${tok}` },
+    });
+    if (!res.ok) return null;
+    return await res.json<T>();
+  } catch (e) {
+    if (e instanceof SpotifyRateLimitError) return null;
+    throw e;
+  }
 }
 
 /**
@@ -560,25 +544,23 @@ async function appTokenGet<T>(path: string): Promise<T | null> {
 async function fetchAllTracksWithAppToken(
   playlistId: string,
 ): Promise<TrackKeyed[] | null> {
-  // Client Credentials uses a *different* token but still talks to
-  // api.spotify.com — same IP bucket as user-token calls. Gate it.
-  try {
-    await assertCanCallSpotify();
-  } catch (e) {
-    if (e instanceof SpotifyRateLimitError) return null;
-    throw e;
-  }
-  recordSpotifyCall();
+  // getAppToken() and each doFetch() go through spotifyFetch internally
+  // — no manual gate needed. Every call is individually counted.
   const tok = await getAppToken();
   if (!tok) return null;
 
   const all: TrackKeyed[] = [];
-  const doFetch = async (path: string) => {
-    const res = await fetch(`${API}${path}`, {
-      headers: { Authorization: `Bearer ${tok}` },
-    });
-    if (!res.ok) return null;
-    return (await res.json()) as unknown;
+  const doFetch = async (path: string): Promise<unknown> => {
+    try {
+      const res = await spotifyFetch(`${API}${path}`, {
+        headers: { Authorization: `Bearer ${tok}` },
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (e) {
+      if (e instanceof SpotifyRateLimitError) return null;
+      throw e;
+    }
   };
 
   // Try /tracks first, then /items. If the first page 403s on both,
@@ -637,20 +619,25 @@ const PATHFINDER_PLAYLIST_HASH =
 async function fetchAnonAccessToken(
   playlistId: string,
 ): Promise<string | null> {
-  const res = await fetch(
-    `https://open.spotify.com/embed/playlist/${playlistId}`,
-    {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Accept: "text/html,application/xhtml+xml",
+  try {
+    const res = await spotifyFetch(
+      `https://open.spotify.com/embed/playlist/${playlistId}`,
+      {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml",
+        },
       },
-    },
-  );
-  if (!res.ok) return null;
-  const html = await res.text();
-  const m = html.match(/"accessToken":"([^"]+)"/);
-  return m ? m[1] : null;
+    );
+    if (!res.ok) return null;
+    const html = await res.text();
+    const m = html.match(/"accessToken":"([^"]+)"/);
+    return m ? m[1] : null;
+  } catch (e) {
+    if (e instanceof SpotifyRateLimitError) return null;
+    throw e;
+  }
 }
 
 interface PathfinderTrackItem {
@@ -690,34 +677,39 @@ async function fetchPathfinderPage(
       },
     },
   });
-  const res = await fetch("https://api-partner.spotify.com/pathfinder/v2/query", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      "App-Platform": "WebPlayer",
-      Origin: "https://open.spotify.com",
-      Referer: "https://open.spotify.com/",
-      "User-Agent":
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    },
-    body,
-  });
-  if (!res.ok) return null;
-  const json = (await res.json()) as {
-    data?: {
-      playlistV2?: {
-        content?: {
-          items?: PathfinderTrackItem[];
-          totalCount?: number;
+  try {
+    const res = await spotifyFetch("https://api-partner.spotify.com/pathfinder/v2/query", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "App-Platform": "WebPlayer",
+        Origin: "https://open.spotify.com",
+        Referer: "https://open.spotify.com/",
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+      body,
+    });
+    if (!res.ok) return null;
+    const json = await res.json<{
+      data?: {
+        playlistV2?: {
+          content?: {
+            items?: PathfinderTrackItem[];
+            totalCount?: number;
+          };
         };
       };
-    };
-  };
-  const content = json?.data?.playlistV2?.content;
-  if (!content || !Array.isArray(content.items)) return null;
-  return { items: content.items, total: content.totalCount ?? content.items.length };
+    }>();
+    const content = json?.data?.playlistV2?.content;
+    if (!content || !Array.isArray(content.items)) return null;
+    return { items: content.items, total: content.totalCount ?? content.items.length };
+  } catch (e) {
+    if (e instanceof SpotifyRateLimitError) return null;
+    throw e;
+  }
 }
 
 function normalizePathfinderItems(
@@ -752,17 +744,8 @@ function normalizePathfinderItems(
 async function fetchAllTracksViaPathfinder(
   playlistId: string,
 ): Promise<TrackKeyed[] | null> {
-  // api-partner.spotify.com shares a bucket with api.spotify.com from
-  // Spotify's rate-limiter perspective (they correlate by IP and by
-  // account if the anon token was minted under one). Calling this
-  // while cooling down would extend the penalty. Gate it.
-  try {
-    await assertCanCallSpotify();
-  } catch (e) {
-    if (e instanceof SpotifyRateLimitError) return null;
-    throw e;
-  }
-  recordSpotifyCall();
+  // fetchAnonAccessToken and fetchPathfinderPage each go through
+  // spotifyFetch internally — no manual gate needed.
   const token = await fetchAnonAccessToken(playlistId);
   if (!token) return null;
   const out: TrackKeyed[] = [];
@@ -804,28 +787,26 @@ async function fetchEmbedTracks(
   userIn: User,
   playlistId: string,
 ): Promise<{ user: User; tracks: TrackKeyed[] }> {
-  // open.spotify.com embed page — same server infra as the rest of
-  // Spotify from their rate-limiter's perspective. Gate it.
+  // spotifyFetch gates, records, and handles 429 automatically.
+  let res;
   try {
-    await assertCanCallSpotify();
+    res = await spotifyFetch(
+      `https://open.spotify.com/embed/playlist/${playlistId}`,
+      {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml",
+          "Accept-Language": "en-US,en;q=0.9",
+        },
+      },
+    );
   } catch (e) {
     if (e instanceof SpotifyRateLimitError) {
       return { user: userIn, tracks: [] };
     }
     throw e;
   }
-  recordSpotifyCall();
-  const res = await fetch(
-    `https://open.spotify.com/embed/playlist/${playlistId}`,
-    {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Accept: "text/html,application/xhtml+xml",
-        "Accept-Language": "en-US,en;q=0.9",
-      },
-    },
-  );
   if (!res.ok) {
     throw new SpotifyError(
       res.status,

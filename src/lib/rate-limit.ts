@@ -1,51 +1,77 @@
 // Centralized Spotify rate-limit guard.
 //
-// Every Spotify HTTP call MUST pass through `assertCanCallSpotify()` at
-// entry and call `recordSpotifyCall()` on the way out (success OR 429).
-// That's the only place we track the rolling-30s budget and the only
-// place we consult the persisted cooldown. The rule: if either gate
-// fails, we raise a SpotifyError(429) WITHOUT making a network call,
-// so a runaway loop can never dig the hole deeper.
+// Every outgoing HTTP call to ANY spotify.com host MUST go through
+// `spotifyFetch()`. That is the single chokepoint — no raw `fetch()`
+// to api.spotify.com, accounts.spotify.com, open.spotify.com, or
+// api-partner.spotify.com is allowed anywhere else in the codebase.
+// The probe route that caused the April 2026 lockout fired 20+ raw
+// requests in one call and retried on 429; never again.
 //
-// Why this file exists (post-mortem):
+// Three layers of protection (cheapest to most durable):
 //
-//   April 2026 we got stuck in a ~12-hour 429 cooldown after rapid
-//   iteration on polling logic. Root cause analysis pointed at three
-//   compounding problems:
+//   1. Per-instance rolling-30s token bucket (in-memory).
+//      BUDGET_MAX_REQUESTS per BUDGET_WINDOW_MS. Stops a single
+//      lambda from bursting past our self-imposed ceiling.
 //
-//     1. Cooldown was in-memory only. A fresh serverless instance
-//        re-fired requests immediately after the previous instance got
-//        429'd, re-arming the rolling window.
-//     2. Fallback chain (Pathfinder, Client Credentials, embed) kept
-//        firing after a 429, all hitting the same Spotify IP bucket
-//        and extending the penalty.
-//     3. No proactive budget: we only found out we were over the limit
-//        when Spotify told us.
+//   2. Cross-instance minimum interval between calls (DB-backed).
+//      Every request reads+writes AppState["spotify:lastCallAt"]
+//      and refuses to fire if another instance called Spotify less
+//      than MIN_INTERVAL_MS ago. This caps global throughput at
+//      1 call per MIN_INTERVAL_MS regardless of how many lambdas
+//      Vercel spins up.
 //
-// This module closes all three: cooldown persists in AppState, the
-// token-bucket rejects proactively, and callers get a clear "we are
-// cooling down, do not escalate to fallbacks" signal via SpotifyError.
+//   3. Cross-instance persisted cooldown (DB-backed).
+//      On any 429 we write AppState["spotify:rateLimitedUntil"] and
+//      refuse every request until it clears. Fail-closed behavior
+//      is the whole point of this module.
+//
+// The three layers compound: you'd have to defeat all of them for a
+// runaway loop to dig a hole. Defeating the bucket requires burst
+// from one instance; defeating the interval requires crossing the
+// DB write latency; defeating the cooldown requires network access
+// without going through spotifyFetch().
+//
+// History (do not repeat):
+//
+//   - April 2026 we ate a ~40,000-second cooldown after a debug probe
+//     route fired 20+ unguarded requests per call with 3x retry on
+//     429. Root cause was "raw fetch() outside the chokepoint". Fixed
+//     by deleting the route and funneling everything through
+//     spotifyFetch().
+//   - Earlier, fallback chains (Pathfinder, Client Credentials, embed)
+//     kept firing after an api.spotify.com 429, all hitting the same
+//     per-IP / per-account bucket. Fixed by gating each fallback at
+//     its entry and never "escalating" on 429.
 
 import { prisma } from "./db";
 
 const COOLDOWN_KEY = "spotify:rateLimitedUntil";
+const LAST_CALL_KEY = "spotify:lastCallAt";
 
-// Spotify's documented rule: "a rolling 30-second window." Dev-mode
-// apps are capped lower than extended-quota apps (exact number is not
-// public). A conservative budget well under whatever the real ceiling
-// is: 60 requests per 30s. In practice a single pollPlaylist() call
-// costs ~2 requests (meta + tracks page), so this caps us at ~30
-// playlist polls per 30s which is far more than we'll ever need.
+// Rolling window for the per-instance bucket. Spotify's documented
+// rule is "a rolling 30-second window" app-wide — we enforce our own
+// ceiling well below whatever the real dev-mode limit is (which is
+// undocumented).
 const BUDGET_WINDOW_MS = 30_000;
-const BUDGET_MAX_REQUESTS = 60;
 
-// Circular buffer of recent request timestamps. We keep only what
-// matters — anything older than BUDGET_WINDOW_MS is dropped on read.
+// Per-instance ceiling. 20/30s × N instances is still well under any
+// plausible dev-mode real limit. Was 60 — lowered after the probe
+// route lockout forced us to assume we don't know the real limit.
+const BUDGET_MAX_REQUESTS = 20;
+
+// Global minimum gap between any two Spotify requests. 500ms means a
+// hard ceiling of 2 calls/sec globally, regardless of how many
+// serverless instances Vercel spins up. A poll cycle with 6 playlists
+// at ~2 calls each = 12 calls = 6 seconds, which is still WELL within
+// any reasonable rate budget. We'd rather make cron slightly slower
+// than risk another multi-hour block.
+const MIN_INTERVAL_MS = 500;
+
+// In-memory circular buffer of recent call timestamps (per instance).
 const recentCalls: number[] = [];
 
-// In-memory cache of the persisted cooldown. We hit AppState at most
-// once per 5s per instance to avoid a DB round-trip on every Spotify
-// call; the write path (recordRateLimited) invalidates immediately.
+// In-memory cache of the persisted cooldown so we don't hit AppState
+// on every call. The write path invalidates immediately.
 let cachedCooldownUntil = 0;
 let cachedCooldownAt = 0;
 const COOLDOWN_CACHE_MS = 5_000;
@@ -53,8 +79,11 @@ const COOLDOWN_CACHE_MS = 5_000;
 export class SpotifyRateLimitError extends Error {
   status = 429 as const;
   secondsRemaining: number;
-  reason: "cooldown" | "budget";
-  constructor(secondsRemaining: number, reason: "cooldown" | "budget") {
+  reason: "cooldown" | "budget" | "interval";
+  constructor(
+    secondsRemaining: number,
+    reason: "cooldown" | "budget" | "interval",
+  ) {
     super(
       `Spotify API error 429: Too many requests — retry after ${secondsRemaining}s`,
     );
@@ -63,27 +92,28 @@ export class SpotifyRateLimitError extends Error {
   }
 }
 
+// -----------------------------------------------------------------
+// Cooldown (cross-instance, persisted)
+// -----------------------------------------------------------------
+
 async function readPersistedCooldown(): Promise<number> {
   const now = Date.now();
   if (now - cachedCooldownAt < COOLDOWN_CACHE_MS) return cachedCooldownUntil;
   try {
-    const row = await prisma.appState.findUnique({ where: { key: COOLDOWN_KEY } });
+    const row = await prisma.appState.findUnique({
+      where: { key: COOLDOWN_KEY },
+    });
     cachedCooldownUntil = row ? Number(row.value) || 0 : 0;
   } catch {
-    // DB unreachable — fail open on this one check rather than
-    // bricking the whole request path. The in-memory fallback below
-    // still protects us from a runaway in the same instance.
-    cachedCooldownUntil = cachedCooldownUntil || 0;
+    // DB unreachable — fail closed on the durable layer by keeping the
+    // last-known value. Better than fail-open which would re-arm the
+    // penalty on DB hiccups.
   }
   cachedCooldownAt = now;
   return cachedCooldownUntil;
 }
 
-/**
- * Current cooldown remaining in seconds, or 0 if we're clear to call.
- * This is the cheap DB-only check that /api/sync-status and the
- * dashboard banner should use — it makes zero Spotify calls.
- */
+/** Current cooldown remaining in seconds, or 0 if clear. */
 export async function getCooldownSeconds(): Promise<number> {
   const until = await readPersistedCooldown();
   const ms = until - Date.now();
@@ -91,47 +121,17 @@ export async function getCooldownSeconds(): Promise<number> {
 }
 
 /**
- * Gate called at the top of every Spotify HTTP request. Throws if we
- * are inside a persisted cooldown window OR if the rolling-30s budget
- * has been exhausted. Callers should let the error propagate — do NOT
- * catch it and retry a different endpoint, because every fallback
- * endpoint (api.spotify.com, api-partner.spotify.com, open.spotify.com)
- * shares the same per-IP / per-account bucket.
+ * Persist a server-issued 429. All instances honor the same cooldown
+ * through AppState. Idempotent — writing the same value twice is fine,
+ * writing a later (greater) value extends the cooldown appropriately.
  */
-export async function assertCanCallSpotify(): Promise<void> {
-  const cooldown = await getCooldownSeconds();
-  if (cooldown > 0) throw new SpotifyRateLimitError(cooldown, "cooldown");
-
-  const now = Date.now();
-  while (recentCalls.length && now - recentCalls[0] > BUDGET_WINDOW_MS) {
-    recentCalls.shift();
-  }
-  if (recentCalls.length >= BUDGET_MAX_REQUESTS) {
-    // Our self-imposed budget — bail before Spotify has a chance to
-    // see the request. Tell the caller how long until the oldest
-    // entry ages out of the window.
-    const wait = Math.ceil((BUDGET_WINDOW_MS - (now - recentCalls[0])) / 1000);
-    throw new SpotifyRateLimitError(Math.max(wait, 1), "budget");
-  }
-}
-
-/**
- * Record a successful Spotify call against the rolling budget.
- * `assertCanCallSpotify` pops entries off; this pushes them on.
- */
-export function recordSpotifyCall(): void {
-  recentCalls.push(Date.now());
-}
-
-/**
- * Persist a server-issued 429 to AppState so every instance honors
- * the same cooldown. Call this from the single place that receives a
- * 429 response — anywhere else and the prevention layer is useless.
- */
-export async function recordRateLimited(retryAfterSeconds: number): Promise<void> {
-  const s = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
-    ? Math.ceil(retryAfterSeconds)
-    : 1;
+export async function recordRateLimited(
+  retryAfterSeconds: number,
+): Promise<void> {
+  const s =
+    Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+      ? Math.ceil(retryAfterSeconds)
+      : 1;
   const until = Date.now() + s * 1000;
   cachedCooldownUntil = until;
   cachedCooldownAt = Date.now();
@@ -142,9 +142,197 @@ export async function recordRateLimited(retryAfterSeconds: number): Promise<void
       update: { value: String(until) },
     });
   } catch {
-    // Swallow — in-memory cache still protects this instance. A
-    // subsequent successful DB write on another call will converge.
+    // In-memory cache still protects this instance.
   }
+}
+
+// -----------------------------------------------------------------
+// Cross-instance minimum interval (DB-backed)
+// -----------------------------------------------------------------
+
+async function readLastCallAt(): Promise<number> {
+  try {
+    const row = await prisma.appState.findUnique({
+      where: { key: LAST_CALL_KEY },
+    });
+    return row ? Number(row.value) || 0 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function writeLastCallAt(ts: number): Promise<void> {
+  try {
+    await prisma.appState.upsert({
+      where: { key: LAST_CALL_KEY },
+      create: { key: LAST_CALL_KEY, value: String(ts) },
+      update: { value: String(ts) },
+    });
+  } catch {
+    // Non-fatal — the per-instance bucket still guards this process.
+  }
+}
+
+// -----------------------------------------------------------------
+// The gate
+// -----------------------------------------------------------------
+
+/**
+ * Called at the top of every spotifyFetch. Throws SpotifyRateLimitError
+ * if any of the three layers rejects. Never catches — callers must
+ * either let it propagate or convert it to a user-facing error.
+ */
+export async function assertCanCallSpotify(): Promise<void> {
+  // Layer 3: persisted cooldown (cheapest to check via cache).
+  const cooldown = await getCooldownSeconds();
+  if (cooldown > 0) throw new SpotifyRateLimitError(cooldown, "cooldown");
+
+  // Layer 1: per-instance rolling-30s bucket.
+  const now = Date.now();
+  while (recentCalls.length && now - recentCalls[0] > BUDGET_WINDOW_MS) {
+    recentCalls.shift();
+  }
+  if (recentCalls.length >= BUDGET_MAX_REQUESTS) {
+    const wait = Math.ceil(
+      (BUDGET_WINDOW_MS - (now - recentCalls[0])) / 1000,
+    );
+    throw new SpotifyRateLimitError(Math.max(wait, 1), "budget");
+  }
+
+  // Layer 2: cross-instance minimum interval. One DB read per call —
+  // adds ~50ms via the Supabase pooler, acceptable given we fire
+  // maybe a dozen Spotify calls per cron tick.
+  const last = await readLastCallAt();
+  const sinceLast = now - last;
+  if (last > 0 && sinceLast < MIN_INTERVAL_MS) {
+    const wait = Math.ceil((MIN_INTERVAL_MS - sinceLast) / 1000) || 1;
+    throw new SpotifyRateLimitError(wait, "interval");
+  }
+}
+
+/**
+ * Record a call against the rolling bucket AND stamp the cross-instance
+ * lastCallAt. Call this IMMEDIATELY before firing the network request,
+ * not after — recording after a successful response creates a race
+ * where two concurrent callers both pass assertCanCallSpotify(), both
+ * fire requests, and only the second one logs.
+ */
+export async function recordSpotifyCall(): Promise<void> {
+  const now = Date.now();
+  recentCalls.push(now);
+  await writeLastCallAt(now);
+}
+
+// -----------------------------------------------------------------
+// THE chokepoint. Every spotify.com fetch in the codebase goes here.
+// -----------------------------------------------------------------
+
+/**
+ * Allowed Spotify hosts. Anything else passed to spotifyFetch is a bug.
+ * Every fetch to one of these hosts — auth tokens, API, Pathfinder,
+ * embed — shares Spotify's rate-limit bucket from their perspective,
+ * so all of them must be gated.
+ */
+const SPOTIFY_HOSTS = new Set([
+  "api.spotify.com",
+  "accounts.spotify.com",
+  "api-partner.spotify.com",
+  "open.spotify.com",
+]);
+
+function isSpotifyUrl(input: string): boolean {
+  try {
+    const u = new URL(input);
+    return SPOTIFY_HOSTS.has(u.host);
+  } catch {
+    return false;
+  }
+}
+
+export interface SpotifyFetchResult {
+  status: number;
+  ok: boolean;
+  headers: Headers;
+  text: () => Promise<string>;
+  json: <T = unknown>() => Promise<T>;
+}
+
+/**
+ * The ONLY function in the codebase permitted to call a Spotify host.
+ *
+ * Responsibilities:
+ *   - Reject at the gate if we're cooling down, over-budget, or
+ *     under the global min-interval.
+ *   - Record the call before the wire fires (so concurrent callers
+ *     can see it via lastCallAt).
+ *   - On a 429 response, persist the cooldown and throw. Do NOT retry.
+ *     Do NOT fall through to a different Spotify host — they all share
+ *     the same bucket and escalating extends the penalty.
+ *   - On network errors, throw — still count against the budget so a
+ *     hammering loop is self-limiting.
+ */
+export async function spotifyFetch(
+  url: string,
+  init?: RequestInit,
+): Promise<SpotifyFetchResult> {
+  if (!isSpotifyUrl(url)) {
+    throw new Error(
+      `spotifyFetch called with non-Spotify host: ${url}. If you need ` +
+        `to fetch a non-Spotify URL, use the global fetch() directly.`,
+    );
+  }
+
+  // Gate check with automatic interval wait. Budget and cooldown
+  // rejections are hard failures. The min-interval pacing is a
+  // throughput concern — aborting a pagination chain because two
+  // sequential requests land <500ms apart would be silly, so we
+  // sleep through it transparently.
+  for (let gateAttempt = 0; ; gateAttempt++) {
+    try {
+      await assertCanCallSpotify();
+      break;
+    } catch (e) {
+      if (
+        e instanceof SpotifyRateLimitError &&
+        e.reason === "interval" &&
+        gateAttempt < 3
+      ) {
+        await new Promise((r) => setTimeout(r, MIN_INTERVAL_MS));
+        continue;
+      }
+      throw e;
+    }
+  }
+  await recordSpotifyCall();
+
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch (err) {
+    // Network error / DNS / timeout. Budget still ticks against us —
+    // the call "happened" from the rate limiter's perspective because
+    // we may or may not have actually reached Spotify.
+    throw err;
+  }
+
+  if (res.status === 429) {
+    const retryAfter = Number(res.headers.get("retry-after") ?? "1");
+    await recordRateLimited(retryAfter);
+    // Drain the body so the socket can be reused.
+    await res.text().catch(() => "");
+    throw new SpotifyRateLimitError(
+      Math.max(1, Math.ceil(retryAfter)),
+      "cooldown",
+    );
+  }
+
+  return {
+    status: res.status,
+    ok: res.ok,
+    headers: res.headers,
+    text: () => res.text(),
+    json: <T,>() => res.json() as Promise<T>,
+  };
 }
 
 /** For tests: clear in-memory state. Does NOT touch the DB. */

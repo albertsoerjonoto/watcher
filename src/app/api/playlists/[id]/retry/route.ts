@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
 import { pollPlaylist } from "@/lib/poll";
+import { getCooldownSeconds } from "@/lib/rate-limit";
 
 // POST /api/playlists/:id/retry
 //
@@ -14,6 +15,16 @@ export async function POST(
 ) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "unauth" }, { status: 401 });
+
+  // Don't fire Spotify calls during a cooldown — the dashboard Retry
+  // button shouldn't generate noisy PollLog rows while we're blocked.
+  const cd = await getCooldownSeconds();
+  if (cd > 0) {
+    return NextResponse.json(
+      { error: "rate-limited", cooldownSeconds: cd },
+      { status: 429 },
+    );
+  }
 
   const playlist = await prisma.playlist.findFirst({
     where: { id: params.id, userId: user.id },
