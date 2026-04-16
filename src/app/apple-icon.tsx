@@ -22,11 +22,12 @@ export default async function AppleIcon() {
       >
         <span
           style={{
-            fontSize: 144,
+            fontSize: 120,
             fontFamily: "Inter",
             fontWeight: 700,
             color: "#1DB954",
             lineHeight: 1,
+            marginTop: 8,
           }}
         >
           W
