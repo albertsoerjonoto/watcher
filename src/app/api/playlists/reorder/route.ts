@@ -18,7 +18,12 @@ import { getCurrentUser } from "@/lib/session";
 export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "unauth" }, { status: 401 });
-  const body = (await request.json()) as { a?: string; b?: string };
+  let body: { a?: string; b?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "invalid json" }, { status: 400 });
+  }
   const { a, b } = body;
   if (!a || !b || a === b) {
     return NextResponse.json({ error: "bad request" }, { status: 400 });

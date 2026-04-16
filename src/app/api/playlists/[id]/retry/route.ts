@@ -41,6 +41,14 @@ export async function POST(
     data: { status: "active", snapshotId: null },
   });
 
-  const result = await pollPlaylist(user, reset);
-  return NextResponse.json({ result });
+  try {
+    const result = await pollPlaylist(user, reset);
+    return NextResponse.json({ result });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json(
+      { error: message.slice(0, 500) },
+      { status: 500 },
+    );
+  }
 }
