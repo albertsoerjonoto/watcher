@@ -36,6 +36,7 @@ interface Props {
   recentByPlaylist: Record<string, TrackRow[]>;
   weekByPlaylist: Record<string, number>;
   errorByPlaylist: Record<string, string>;
+  editing?: boolean;
 }
 
 export function DashboardPlaylistList({
@@ -43,6 +44,7 @@ export function DashboardPlaylistList({
   recentByPlaylist,
   weekByPlaylist,
   errorByPlaylist,
+  editing = false,
 }: Props) {
   const [playlists, setPlaylists] = useState(initialPlaylists);
   // Mirror of playlists state for reading inside async queue callbacks
@@ -266,13 +268,15 @@ export function DashboardPlaylistList({
                       )}
                     </div>
                     <RetryButton playlistId={p.id} />
-                    <PlaylistActions
-                      playlistName={p.name}
-                      isFirst={groupIdx === 0}
-                      isLast={groupIdx === rows.length - 1}
-                      onMove={(direction) => movePlaylist(p.id, direction)}
-                      onDelete={() => deletePlaylist(p.id)}
-                    />
+                    {editing && (
+                      <PlaylistActions
+                        playlistName={p.name}
+                        isFirst={groupIdx === 0}
+                        isLast={groupIdx === rows.length - 1}
+                        onMove={(direction) => movePlaylist(p.id, direction)}
+                        onDelete={() => deletePlaylist(p.id)}
+                      />
+                    )}
                   </div>
                   {recent.length > 0 && (
                     <ul className="mt-3 space-y-1 border-l border-neutral-800 pl-3 text-xs">
