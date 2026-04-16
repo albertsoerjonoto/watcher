@@ -1,3 +1,3 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <text x="256" y="410" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-weight="700" font-size="460" fill="#1DB954">W</text>
+  <path d="M56 80 l80 352 l120-240 l120 240 l80-352 l-64 0 l-40 192 l-96-192 l-96 192 l-40-192Z" fill="#1DB954"/>
 </svg>
