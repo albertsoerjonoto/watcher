@@ -3,7 +3,11 @@ import { ImageResponse } from "next/og";
 export const size = { width: 180, height: 180 };
 export const contentType = "image/png";
 
-export default function AppleIcon() {
+export default async function AppleIcon() {
+  const fontData = await fetch(
+    "https://fonts.gstatic.com/s/inter/v18/UcCo3FwrK3iLTcviYwYZ90OsRA.woff",
+  ).then((r) => r.arrayBuffer());
+
   return new ImageResponse(
     (
       <div
@@ -19,6 +23,7 @@ export default function AppleIcon() {
         <span
           style={{
             fontSize: 144,
+            fontFamily: "Inter",
             fontWeight: 700,
             color: "#1DB954",
             lineHeight: 1,
@@ -28,6 +33,9 @@ export default function AppleIcon() {
         </span>
       </div>
     ),
-    { ...size },
+    {
+      ...size,
+      fonts: [{ name: "Inter", data: fontData, weight: 700, style: "normal" }],
+    },
   );
 }
