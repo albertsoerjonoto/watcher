@@ -20,9 +20,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <header className="border-b border-neutral-800">
           <nav className="mx-auto flex max-w-3xl items-center gap-4 p-4 text-sm">
-            <Link href="/" className="font-semibold text-spotify">
-              Watcher
-            </Link>
             <Link href="/" className="text-neutral-300 hover:text-white">
               Dashboard
             </Link>
