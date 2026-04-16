@@ -6,6 +6,7 @@ export const metadata: Metadata = {
   title: "Spotify Playlist Watcher",
   description: "Get notified when new tracks are added to your playlists.",
   manifest: "/manifest.webmanifest",
+  icons: { icon: "/icon.svg", apple: "/icon.svg" },
   appleWebApp: { capable: true, title: "SpotifyWatcher", statusBarStyle: "black-translucent" },
 };
 
