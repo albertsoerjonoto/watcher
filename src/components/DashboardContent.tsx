@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { AddPlaylistForm } from "./AddPlaylistForm";
@@ -54,6 +55,9 @@ export function DashboardContent({ fallbackData }: Props) {
     user,
   } = data!;
 
+  const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState(false);
+
   return (
     <section className="space-y-6">
       <InstallHint />
@@ -103,13 +107,31 @@ export function DashboardContent({ fallbackData }: Props) {
         </div>
       )}
 
-      <AddPlaylistForm />
+      <div className="flex items-center gap-3 text-sm">
+        <button
+          type="button"
+          onClick={() => { setShowAdd(!showAdd); if (editing) setEditing(false); }}
+          className={showAdd ? "font-medium text-spotify" : "text-neutral-400 hover:text-white"}
+        >
+          Add
+        </button>
+        <button
+          type="button"
+          onClick={() => { setEditing(!editing); if (showAdd) setShowAdd(false); }}
+          className={editing ? "font-medium text-spotify" : "text-neutral-400 hover:text-white"}
+        >
+          Edit
+        </button>
+      </div>
+
+      {showAdd && <AddPlaylistForm />}
 
       <DashboardPlaylistList
         playlists={playlists}
         recentByPlaylist={recentByPlaylist}
         weekByPlaylist={weekByPlaylist}
         errorByPlaylist={errorByPlaylist}
+        editing={editing}
       />
     </section>
   );
