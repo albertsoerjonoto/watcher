@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { PlaylistActions } from "./PlaylistActions";
 import { RetryButton } from "./RetryButton";
@@ -50,6 +50,26 @@ export function DashboardPlaylistList({
   const playlistsRef = useRef(initialPlaylists);
   // Serial queue ref to prevent concurrent reorder API calls from racing.
   const queueRef = useRef<Promise<void>>(Promise.resolve());
+
+  // Sync local state when SWR revalidates with new data from the server.
+  // useState only uses initialPlaylists on mount; this effect keeps the
+  // list current after AutoRefresh/mutate triggers a background refetch.
+  // We compare playlist IDs to avoid overwriting in-flight optimistic
+  // reorders with stale server data — if only the order changed, the
+  // optimistic state is likely more current than the server response.
+  const prevIdsRef = useRef(initialPlaylists.map((p) => p.id).join(","));
+  useEffect(() => {
+    const newIds = initialPlaylists.map((p) => p.id).join(",");
+    const currentIds = playlistsRef.current.map((p) => p.id).join(",");
+    // Sync if playlists were added/removed (ID set changed) or if
+    // the data has changed and no optimistic reorder is in flight
+    // (the current ID set matches the old server IDs).
+    if (newIds !== prevIdsRef.current || currentIds === prevIdsRef.current) {
+      setPlaylists(initialPlaylists);
+      playlistsRef.current = initialPlaylists;
+    }
+    prevIdsRef.current = newIds;
+  }, [initialPlaylists]);
 
   // Group playlists by owner. Maintains sortOrder from state.
   const groups = new Map<
