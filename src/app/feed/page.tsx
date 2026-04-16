@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
 import Link from "next/link";
@@ -5,22 +6,39 @@ import { dayKeyJakarta, formatDateJakarta } from "@/lib/datetime";
 
 export const dynamic = "force-dynamic";
 
+interface FeedRow {
+  id: string;
+  title: string;
+  artists: string;
+  albumImageUrl: string | null;
+  addedAt: Date;
+  playlistId: string;
+  playlistName: string;
+}
+
 export default async function FeedPage() {
   const user = await getCurrentUser();
   if (!user) {
     return <p className="text-neutral-400">Sign in to view the feed.</p>;
   }
-  const events = await prisma.track.findMany({
-    where: { playlist: { userId: user.id } },
-    orderBy: { firstSeenAt: "desc" },
-    take: 200,
-    include: { playlist: { select: { id: true, name: true } } },
-  });
 
-  const groups = new Map<string, typeof events>();
+  // Only show tracks added to Spotify playlists AFTER the user started
+  // watching them, using Spotify's real addedAt timestamp.
+  const events = await prisma.$queryRaw<FeedRow[]>(Prisma.sql`
+    SELECT t.id, t.title, t.artists, t."albumImageUrl", t."addedAt",
+           p.id AS "playlistId", p.name AS "playlistName"
+    FROM "Track" t
+    JOIN "Playlist" p ON t."playlistId" = p.id
+    WHERE p."userId" = ${user.id}
+      AND t."addedAt" >= p."createdAt"
+    ORDER BY t."addedAt" DESC
+    LIMIT 200
+  `);
+
+  const groups = new Map<string, FeedRow[]>();
   for (const e of events) {
-    const k = dayKeyJakarta(e.firstSeenAt);
-    if (!groups.has(k)) groups.set(k, [] as typeof events);
+    const k = dayKeyJakarta(e.addedAt);
+    if (!groups.has(k)) groups.set(k, []);
     groups.get(k)!.push(e);
   }
 
@@ -57,10 +75,10 @@ export default async function FeedPage() {
                     <div className="truncate text-xs text-neutral-400">
                       {artists.join(", ")} ·{" "}
                       <Link
-                        href={`/playlists/${e.playlist.id}`}
+                        href={`/playlists/${e.playlistId}`}
                         className="hover:underline"
                       >
-                        {e.playlist.name}
+                        {e.playlistName}
                       </Link>
                     </div>
                   </div>
