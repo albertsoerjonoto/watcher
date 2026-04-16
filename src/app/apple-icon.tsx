@@ -1,14 +1,12 @@
 import { ImageResponse } from "next/og";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 
 export const size = { width: 180, height: 180 };
 export const contentType = "image/png";
 
 export default async function AppleIcon() {
-  const fontData = await readFile(
-    join(process.cwd(), "src/assets/inter-bold.ttf"),
-  );
+  const fontData = await fetch(
+    "https://fonts.gstatic.com/s/inter/v20/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuFuYMZg.ttf",
+  ).then((r) => r.arrayBuffer());
 
   return new ImageResponse(
     (
