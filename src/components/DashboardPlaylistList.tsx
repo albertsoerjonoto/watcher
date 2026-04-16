@@ -272,8 +272,9 @@ export function DashboardPlaylistList({
                         </div>
                       )}
                     </div>
-                    <RetryButton playlistId={p.id} />
                     {editing && (
+                      <>
+                      <RetryButton playlistId={p.id} />
                       <PlaylistActions
                         playlistName={p.name}
                         isFirst={groupIdx === 0}
@@ -281,6 +282,7 @@ export function DashboardPlaylistList({
                         onMove={(direction) => movePlaylist(p.id, direction)}
                         onDelete={() => deletePlaylist(p.id)}
                       />
+                      </>
                     )}
                   </div>
                   {recent.length > 0 && (
