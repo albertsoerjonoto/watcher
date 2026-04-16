@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useSWRConfig } from "swr";
+import { DASHBOARD_KEY } from "./DashboardContent";
 
 export function RetryButton({ playlistId }: { playlistId: string }) {
-  const router = useRouter();
+  const { mutate } = useSWRConfig();
   const [busy, setBusy] = useState(false);
 
   async function onClick() {
@@ -13,7 +14,7 @@ export function RetryButton({ playlistId }: { playlistId: string }) {
       await fetch(`/api/playlists/${playlistId}/retry`, { method: "POST" });
     } finally {
       setBusy(false);
-      router.refresh();
+      mutate(DASHBOARD_KEY);
     }
   }
 
