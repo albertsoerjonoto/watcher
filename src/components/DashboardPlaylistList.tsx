@@ -37,6 +37,7 @@ interface Props {
   weekByPlaylist: Record<string, number>;
   errorByPlaylist: Record<string, string>;
   editing?: boolean;
+  toolbar?: React.ReactNode;
 }
 
 export function DashboardPlaylistList({
@@ -45,6 +46,7 @@ export function DashboardPlaylistList({
   weekByPlaylist,
   errorByPlaylist,
   editing = false,
+  toolbar,
 }: Props) {
   const [playlists, setPlaylists] = useState(initialPlaylists);
   // Mirror of playlists state for reading inside async queue callbacks
@@ -203,11 +205,14 @@ export function DashboardPlaylistList({
 
   return (
     <>
-      {Array.from(groups.entries()).map(([groupKey, { ownerName, rows }]) => (
+      {Array.from(groups.entries()).map(([groupKey, { ownerName, rows }], groupIndex) => (
         <div key={groupKey} className="space-y-2">
-          <h2 className="px-1 text-xs uppercase tracking-wide text-neutral-500">
-            By {ownerName}
-          </h2>
+          <div className="flex items-center justify-between px-1">
+            <h2 className="text-xs uppercase tracking-wide text-neutral-500">
+              By {ownerName}
+            </h2>
+            {groupIndex === 0 && toolbar}
+          </div>
           <ul className="divide-y divide-neutral-800 rounded-lg border border-neutral-800">
             {rows.map((p, groupIdx) => {
               const recent = recentByPlaylist[p.id] ?? [];

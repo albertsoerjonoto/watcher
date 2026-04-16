@@ -107,23 +107,6 @@ export function DashboardContent({ fallbackData }: Props) {
         </div>
       )}
 
-      <div className="flex items-center gap-3 text-sm">
-        <button
-          type="button"
-          onClick={() => { setShowAdd(!showAdd); if (editing) setEditing(false); }}
-          className={showAdd ? "font-medium text-spotify" : "text-neutral-400 hover:text-white"}
-        >
-          Add
-        </button>
-        <button
-          type="button"
-          onClick={() => { setEditing(!editing); if (showAdd) setShowAdd(false); }}
-          className={editing ? "font-medium text-spotify" : "text-neutral-400 hover:text-white"}
-        >
-          Edit
-        </button>
-      </div>
-
       {showAdd && <AddPlaylistForm />}
 
       <DashboardPlaylistList
@@ -132,6 +115,24 @@ export function DashboardContent({ fallbackData }: Props) {
         weekByPlaylist={weekByPlaylist}
         errorByPlaylist={errorByPlaylist}
         editing={editing}
+        toolbar={
+          <div className="flex items-center gap-3 text-sm">
+            <button
+              type="button"
+              onClick={() => { setShowAdd(!showAdd); if (editing) setEditing(false); }}
+              className={showAdd ? "font-medium text-spotify" : "text-neutral-400 hover:text-white"}
+            >
+              Add
+            </button>
+            <button
+              type="button"
+              onClick={() => { setEditing(!editing); if (showAdd) setShowAdd(false); }}
+              className={editing ? "font-medium text-spotify" : "text-neutral-400 hover:text-white"}
+            >
+              Edit
+            </button>
+          </div>
+        }
       />
     </section>
   );
