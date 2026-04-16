@@ -257,10 +257,12 @@ function normalizeItems(
     // whichever field carries the track payload.
     const payload: SpotifyTrackPayload | null | undefined = it.track ?? it.item;
     if (!payload || !payload.id) continue;
+    // Defensive: skip tracks with no name (malformed API response).
+    if (!payload.name) continue;
     out.push({
       spotifyTrackId: payload.id,
       title: payload.name,
-      artists: payload.artists.map((a) => a.name),
+      artists: (payload.artists ?? []).map((a) => a.name),
       album: payload.album?.name ?? null,
       albumImageUrl: payload.album?.images?.[0]?.url ?? null,
       durationMs: payload.duration_ms,
