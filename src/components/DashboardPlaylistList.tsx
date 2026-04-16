@@ -245,7 +245,7 @@ export function DashboardPlaylistList({
                         )}
                       </div>
                       <div className="text-xs text-neutral-400">
-                        {p._count.tracks} tracks · last checked{" "}
+                        {p._count.tracks} songs · checked{" "}
                         {formatDateTimeJakarta(p.lastCheckedAt)}
                         {p.status !== "active" && (
                           <span className="ml-2 text-amber-400">

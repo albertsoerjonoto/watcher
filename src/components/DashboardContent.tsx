@@ -3,7 +3,6 @@
 import useSWR from "swr";
 import Link from "next/link";
 import { AddPlaylistForm } from "./AddPlaylistForm";
-import { AutoRefresh } from "./AutoRefresh";
 import { InstallHint } from "./InstallHint";
 import {
   DashboardPlaylistList,
@@ -103,16 +102,6 @@ export function DashboardContent({ fallbackData }: Props) {
           </Link>
         </div>
       )}
-
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold">Watched playlists</h1>
-          <p className="text-sm text-neutral-400">
-            Signed in as {user.displayName ?? user.spotifyId}
-          </p>
-        </div>
-        <AutoRefresh />
-      </div>
 
       <AddPlaylistForm />
 

@@ -1,6 +1,7 @@
 import "./globals.css";
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
+import { AutoRefresh } from "@/components/AutoRefresh";
 
 export const metadata: Metadata = {
   title: "Watcher",
@@ -29,9 +30,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/feed" className="text-neutral-300 hover:text-white">
               Feed
             </Link>
-            <Link href="/settings" className="ml-auto text-neutral-300 hover:text-white">
-              Settings
-            </Link>
+            <div className="ml-auto flex items-center gap-4">
+              <AutoRefresh />
+              <Link href="/settings" className="text-neutral-300 hover:text-white">
+                Settings
+              </Link>
+            </div>
           </nav>
         </header>
         <main className="mx-auto max-w-3xl p-4">{children}</main>
