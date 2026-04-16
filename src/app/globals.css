@@ -5,11 +5,13 @@
 :root {
   color-scheme: dark light;
 }
-body {
+html, body {
   @apply bg-neutral-950 text-neutral-100 antialiased;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
-body::-webkit-scrollbar {
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+*::-webkit-scrollbar {
   display: none;
 }
