@@ -83,6 +83,7 @@ export function EnablePush() {
       router.refresh();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err));
+      setSubscribedHere(false);
     } finally {
       setBusy(false);
     }
@@ -107,6 +108,9 @@ export function EnablePush() {
 
   return (
     <div className="space-y-2">
+      {subscribedHere === null && (
+        <p className="text-xs text-neutral-600">Checking subscription...</p>
+      )}
       {subscribedHere === true && (
         <p className="text-xs text-spotify">
           ✓ This device is subscribed.

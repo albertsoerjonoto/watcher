@@ -56,6 +56,10 @@ export async function POST() {
         { lastCheckedAt: { lt: staleCutoff } },
       ],
     },
+    // Same deterministic ordering as pollAllForUser: never-checked
+    // playlists first, then oldest-checked. Prevents 429 short-circuit
+    // from repeatedly starving the same playlists.
+    orderBy: [{ lastCheckedAt: "asc" }, { createdAt: "asc" }],
   });
 
   if (stale.length === 0) {

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useSWRConfig } from "swr";
+import { DASHBOARD_KEY } from "./DashboardContent";
 
 // Mounted on the dashboard. Before firing the real /api/refresh (which
 // polls Spotify), it first GETs /api/sync-status — a pure-DB endpoint
@@ -11,15 +12,6 @@ import { useRouter } from "next/navigation";
 // The refresh only happens when BOTH gates pass:
 //   - cooldownSeconds === 0
 //   - staleCount > 0
-//
-// Why this is important (post-mortem):
-//
-//   Earlier versions fired /api/refresh on mount and on every
-//   visibilitychange, re-polling every watched playlist regardless of
-//   how recently we'd checked. A full afternoon of tab-switching
-//   during dev burned through Spotify's rolling-30s budget and earned
-//   a ~12-hour 429 block. See src/lib/rate-limit.ts for the full
-//   post-mortem and the prevention strategy.
 type SyncState =
   | { kind: "idle" }
   | { kind: "checking" }
@@ -43,7 +35,7 @@ interface StatusResponse {
 }
 
 export function AutoRefresh() {
-  const router = useRouter();
+  const { mutate } = useSWRConfig();
   const lastRunRef = useRef<number>(0);
   const busyRef = useRef<boolean>(false);
   const [state, setState] = useState<SyncState>({ kind: "idle" });
@@ -51,15 +43,11 @@ export function AutoRefresh() {
   async function run(force = false) {
     if (busyRef.current) return;
     const now = Date.now();
-    // 10s minimum between automatic checks so rapid tab-switching
-    // doesn't DOS our own status endpoint. A manual button click
-    // bypasses this.
     if (!force && now - lastRunRef.current < 10_000) return;
     lastRunRef.current = now;
     busyRef.current = true;
     setState({ kind: "checking" });
     try {
-      // Phase 1: DB-only status check. Cheap, no Spotify calls.
       const statusRes = await fetch("/api/sync-status", { cache: "no-store" });
       if (!statusRes.ok) {
         setState({ kind: "error", message: `status ${statusRes.status}` });
@@ -78,8 +66,6 @@ export function AutoRefresh() {
         return;
       }
 
-      // Phase 2: real refresh. Only reached if we actually have work
-      // to do AND Spotify isn't cooling us down.
       setState({ kind: "syncing" });
       const res = await fetch("/api/refresh", { method: "POST" });
       if (!res.ok) {
@@ -116,7 +102,9 @@ export function AutoRefresh() {
       } else {
         setState({ kind: "ok", new: totalNew, at: Date.now() });
       }
-      router.refresh();
+      // Revalidate SWR cache so the dashboard updates without a full
+      // page reload.
+      mutate(DASHBOARD_KEY);
     } catch (err) {
       setState({
         kind: "error",
@@ -134,8 +122,6 @@ export function AutoRefresh() {
     }
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-    // run() is stable for the lifetime of the component — it only
-    // captures refs and the router, which Next guarantees is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

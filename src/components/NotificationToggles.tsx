@@ -15,11 +15,19 @@ export function NotificationToggles({ playlists }: { playlists: P[] }) {
     setState((s) =>
       s.map((p) => (p.id === id ? { ...p, notifyEnabled: next } : p)),
     );
-    await fetch(`/api/playlists/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ notifyEnabled: next }),
-    });
+    try {
+      const res = await fetch(`/api/playlists/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notifyEnabled: next }),
+      });
+      if (!res.ok) throw new Error(`PATCH ${res.status}`);
+    } catch {
+      // Revert optimistic update on failure
+      setState((s) =>
+        s.map((p) => (p.id === id ? { ...p, notifyEnabled: !next } : p)),
+      );
+    }
   }
 
   if (state.length === 0) {
