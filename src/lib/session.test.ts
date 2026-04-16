@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 
 // Test session signing without needing the Next.js cookies() context.
 // We test the signing/verification logic directly using the internal
