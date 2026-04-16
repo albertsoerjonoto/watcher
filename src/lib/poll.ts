@@ -207,7 +207,7 @@ export async function pollPlaylist(
           : `https://open.spotify.com/playlist/${playlist.spotifyId}`;
       console.log(`[poll] ${playlist.name}: sending batched push (${added.length} tracks)`);
       const { sent, pruned } = await sendPushToUser(user.id, {
-        title: `New in ${meta.data.name}`,
+        title: meta.data.name,
         body: lines.join("\n"),
         playlistId: playlist.spotifyId,
         url,
