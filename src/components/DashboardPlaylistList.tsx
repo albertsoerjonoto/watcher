@@ -45,6 +45,9 @@ export function DashboardPlaylistList({
   errorByPlaylist,
 }: Props) {
   const [playlists, setPlaylists] = useState(initialPlaylists);
+  // Mirror of playlists state for reading inside async queue callbacks
+  // without abusing setPlaylists as a read-only side channel.
+  const playlistsRef = useRef(initialPlaylists);
   // Serial queue ref to prevent concurrent reorder API calls from racing.
   const queueRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -91,18 +94,18 @@ export function DashboardPlaylistList({
         const bIdx = groupIndices[neighborPosInGroup];
         const next = [...prev];
         [next[aIdx], next[bIdx]] = [next[bIdx], next[aIdx]];
+        playlistsRef.current = next;
         return next;
       });
 
       // Enqueue API call — serial to prevent races.
       queueRef.current = queueRef.current.then(async () => {
-        // Re-read state to find the neighbor's id after the swap.
-        // We need the *other* playlist's id for the API.
-        // The simplest approach: compute it from the current playlists state.
+        // Read the current playlist order from the ref to find
+        // which playlist was the swap neighbor.
+        const current = playlistsRef.current;
+        const playlist = current.find((p) => p.id === playlistId);
         let otherId: string | undefined;
-        setPlaylists((current) => {
-          const playlist = current.find((p) => p.id === playlistId);
-          if (!playlist) return current;
+        if (playlist) {
           const ownerKey = playlist.ownerSpotifyId ?? "unknown";
           const groupIndices = current
             .map((p, i) => ({ p, i }))
@@ -120,8 +123,7 @@ export function DashboardPlaylistList({
           if (neighborIdx >= 0 && neighborIdx < groupIndices.length) {
             otherId = current[groupIndices[neighborIdx]].id;
           }
-          return current; // no mutation, just reading
-        });
+        }
 
         if (!otherId) return;
         try {
@@ -139,6 +141,7 @@ export function DashboardPlaylistList({
             if (aIdx < 0 || bIdx < 0) return prev;
             const next = [...prev];
             [next[aIdx], next[bIdx]] = [next[bIdx], next[aIdx]];
+            playlistsRef.current = next;
             return next;
           });
         }
@@ -149,7 +152,11 @@ export function DashboardPlaylistList({
 
   const deletePlaylist = useCallback((playlistId: string) => {
     // Optimistic remove
-    setPlaylists((prev) => prev.filter((p) => p.id !== playlistId));
+    setPlaylists((prev) => {
+      const next = prev.filter((p) => p.id !== playlistId);
+      playlistsRef.current = next;
+      return next;
+    });
 
     queueRef.current = queueRef.current.then(async () => {
       try {
