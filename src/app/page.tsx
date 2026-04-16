@@ -6,9 +6,11 @@ import { getCurrentUser } from "@/lib/session";
 import { AddPlaylistForm } from "@/components/AddPlaylistForm";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { InstallHint } from "@/components/InstallHint";
-import { RetryButton } from "@/components/RetryButton";
-import { PlaylistActionsClient } from "@/components/PlaylistActions";
-import { formatDateJakarta, formatDateTimeJakarta } from "@/lib/datetime";
+import {
+  DashboardPlaylistList,
+  type PlaylistRow,
+  type TrackRow,
+} from "@/components/DashboardPlaylistList";
 
 export const dynamic = "force-dynamic";
 
@@ -100,60 +102,70 @@ export default async function DashboardPage() {
         .then((n) => n > 0),
     ]);
 
-  const weekByPlaylist = new Map(
+  const weekByPlaylistMap = new Map(
     weekCounts.map((r) => [r.playlistId, r._count._all]),
   );
-  const errorByPlaylist = new Map(
+  const errorByPlaylistMap = new Map(
     lastErrors.filter((r) => r.error).map((r) => [r.playlistId, r.error]),
   );
   // Group the windowed result by playlistId. The window function
   // already capped each group at RECENT_PER_PLAYLIST; we just need
   // to bucket by playlist id and ensure each bucket is sorted.
-  const recentByPlaylist = new Map<string, Track[]>();
+  const recentByPlaylistMap = new Map<string, Track[]>();
   for (const t of allRecentTracks) {
-    const bucket = recentByPlaylist.get(t.playlistId);
+    const bucket = recentByPlaylistMap.get(t.playlistId);
     if (bucket) bucket.push(t);
-    else recentByPlaylist.set(t.playlistId, [t]);
+    else recentByPlaylistMap.set(t.playlistId, [t]);
   }
-  for (const bucket of recentByPlaylist.values()) {
+  for (const bucket of recentByPlaylistMap.values()) {
     bucket.sort((a, b) => b.addedAt.getTime() - a.addedAt.getTime());
   }
 
   // If any recent poll failed on token refresh, Spotify has revoked the
   // stored refresh token and nothing will work until the user re-auths.
-  // Show a banner with a one-tap re-auth link. Otherwise re-auth is
-  // tucked away on the Settings page — having it on the dashboard
-  // header was confusing because users assumed they had to click it
-  // every time they wanted fresh data.
-  const needsReauth = Array.from(errorByPlaylist.values()).some((e) =>
+  const needsReauth = Array.from(errorByPlaylistMap.values()).some((e) =>
     e?.toLowerCase().includes("token refresh failed"),
   );
 
-  // Highest cooldown across all rate-limited polls — the dashboard
-  // shows this next to the sync badge so the user knows how long
-  // until Spotify will accept another request.
-  const cooldownSeconds = Array.from(errorByPlaylist.values())
+  // Highest cooldown across all rate-limited polls.
+  const cooldownSeconds = Array.from(errorByPlaylistMap.values())
     .map((e) => {
       const m = e?.match(/retry after (\d+)s/i);
       return m ? Number(m[1]) : 0;
     })
     .reduce((a, b) => Math.max(a, b), 0);
 
-  // Group playlists by owner — the dashboard answers the question
-  // "what new tracks landed in playlists I care about", and that's
-  // easier to scan when playlists from the same owner are visually
-  // grouped. Iteration order preserves the user-defined sortOrder.
-  const groups = new Map<
-    string,
-    { ownerName: string; rows: typeof playlists }
-  >();
-  for (const p of playlists) {
-    const key = p.ownerSpotifyId ?? "unknown";
-    const ownerName =
-      p.ownerDisplayName ?? p.ownerSpotifyId ?? "Unknown owner";
-    if (!groups.has(key)) groups.set(key, { ownerName, rows: [] });
-    groups.get(key)!.rows.push(p);
+  // Serialise data for the client component. Dates become ISO strings,
+  // Maps become plain objects, Prisma types become simple interfaces.
+  const playlistRows: PlaylistRow[] = playlists.map((p) => ({
+    id: p.id,
+    spotifyId: p.spotifyId,
+    name: p.name,
+    imageUrl: p.imageUrl,
+    ownerSpotifyId: p.ownerSpotifyId,
+    ownerDisplayName: p.ownerDisplayName,
+    status: p.status,
+    lastCheckedAt: p.lastCheckedAt?.toISOString() ?? null,
+    _count: { tracks: p._count.tracks },
+  }));
+  const recentByPlaylist: Record<string, TrackRow[]> = {};
+  for (const [pid, tracks] of recentByPlaylistMap) {
+    recentByPlaylist[pid] = tracks.map((t) => ({
+      id: t.id,
+      playlistId: t.playlistId,
+      spotifyTrackId: t.spotifyTrackId,
+      title: t.title,
+      artists: t.artists,
+      album: t.album,
+      albumImageUrl: t.albumImageUrl,
+      addedAt: t.addedAt.toISOString(),
+    }));
   }
+  const weekByPlaylist: Record<string, number> = {};
+  for (const [pid, count] of weekByPlaylistMap) weekByPlaylist[pid] = count;
+  const errorByPlaylist: Record<string, string> = {};
+  for (const [pid, err] of errorByPlaylistMap)
+    if (pid && err) errorByPlaylist[pid] = err;
 
   return (
     <section className="space-y-6">
@@ -216,121 +228,12 @@ export default async function DashboardPage() {
 
       <AddPlaylistForm />
 
-      {playlists.length === 0 && (
-        <div className="rounded-lg border border-neutral-800 p-4 text-sm text-neutral-400">
-          No playlists yet. Paste a Spotify playlist URL above.
-        </div>
-      )}
-
-      {Array.from(groups.entries()).map(([groupKey, { ownerName, rows }]) => {
-        // Reorder operates WITHIN a group, not across the global list.
-        // Previously we swapped sortOrder with the global neighbor, which
-        // worked at the DB level but was invisible on screen because the
-        // dashboard renders playlists grouped by owner. Clicking ↑ on a
-        // row whose global neighbor lived in a different group just
-        // silently swapped sortOrder numbers without any visual change,
-        // producing the "slow and buggy" reorder the user reported.
-        return (
-          <div key={groupKey} className="space-y-2">
-            <h2 className="px-1 text-xs uppercase tracking-wide text-neutral-500">
-              By {ownerName}
-            </h2>
-            <ul className="divide-y divide-neutral-800 rounded-lg border border-neutral-800">
-              {rows.map((p, groupIdx) => {
-                const recent = recentByPlaylist.get(p.id) ?? [];
-                return (
-                  <li
-                    key={p.id}
-                    data-playlist-id={p.id}
-                    className="p-4"
-                  >
-                    <div className="flex items-start gap-3">
-                      {p.imageUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={p.imageUrl}
-                          alt=""
-                          className="h-14 w-14 shrink-0 rounded object-cover"
-                        />
-                      ) : (
-                        <div className="h-14 w-14 shrink-0 rounded bg-neutral-800" />
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <Link
-                          href={`/playlists/${p.id}`}
-                          className="block truncate font-medium hover:underline"
-                        >
-                          {p.name}
-                        </Link>
-                        <div className="text-xs text-neutral-400">
-                          {p._count.tracks} tracks · last checked{" "}
-                          {formatDateTimeJakarta(p.lastCheckedAt)}
-                          {p.status !== "active" && (
-                            <span className="ml-2 text-amber-400">
-                              ({p.status})
-                            </span>
-                          )}
-                        </div>
-                        {errorByPlaylist.get(p.id) && (() => {
-                          const msg = errorByPlaylist.get(p.id)!;
-                          const isRateLimited = msg.includes("429");
-                          const cls = isRateLimited
-                            ? "mt-1 break-all rounded bg-amber-950/60 px-2 py-1 font-mono text-[10px] text-amber-300"
-                            : "mt-1 break-all rounded bg-red-950/60 px-2 py-1 font-mono text-[10px] text-red-300";
-                          return <div className={cls}>{msg}</div>;
-                        })()}
-                      </div>
-                      {(weekByPlaylist.get(p.id) ?? 0) > 0 && (
-                        <span className="shrink-0 rounded-full bg-spotify/20 px-2 py-1 text-xs text-spotify">
-                          +{weekByPlaylist.get(p.id)} this week
-                        </span>
-                      )}
-                      <RetryButton playlistId={p.id} />
-                      <PlaylistActionsClient
-                        playlistId={p.id}
-                        playlistName={p.name}
-                        isFirst={groupIdx === 0}
-                        isLast={groupIdx === rows.length - 1}
-                      />
-                    </div>
-                    {recent.length > 0 && (
-                      <ul className="mt-3 space-y-1 border-l border-neutral-800 pl-3 text-xs">
-                        {recent.map((t) => {
-                          const artists = JSON.parse(t.artists) as string[];
-                          return (
-                            <li key={t.id} className="flex items-center gap-2">
-                              {t.albumImageUrl ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img
-                                  src={t.albumImageUrl}
-                                  alt=""
-                                  className="h-6 w-6 shrink-0 rounded-sm object-cover"
-                                />
-                              ) : null}
-                              <span className="flex-1 truncate">
-                                <span className="text-neutral-200">
-                                  {t.title}
-                                </span>
-                                <span className="text-neutral-500">
-                                  {" — "}
-                                  {artists.join(", ")}
-                                </span>
-                              </span>
-                              <time className="shrink-0 text-neutral-600">
-                                {formatDateJakarta(t.addedAt)}
-                              </time>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        );
-      })}
+      <DashboardPlaylistList
+        playlists={playlistRows}
+        recentByPlaylist={recentByPlaylist}
+        weekByPlaylist={weekByPlaylist}
+        errorByPlaylist={errorByPlaylist}
+      />
     </section>
   );
 }
