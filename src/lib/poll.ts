@@ -5,7 +5,7 @@
 //   1. Cheap snapshot_id short-circuit
 //   2. Full track fetch + diff against DB
 //   3. Persist new Track rows
-//   4. Fire web-push for each new track, suppressing self-adds
+//   4. Fire web-push for each new track
 //   5. Write a PollLog row
 //   6. Mark unavailable playlists (404/403) rather than crashing
 
@@ -16,7 +16,7 @@ import {
   fetchPlaylistMeta,
   SpotifyError,
 } from "./spotify";
-import { diffTracks, filterSelfAdds, type TrackKeyed } from "./diff";
+import { diffTracks, type TrackKeyed } from "./diff";
 import { sendPushToUser } from "./push";
 import type { Playlist, User } from "@prisma/client";
 
@@ -180,12 +180,10 @@ export async function pollPlaylist(
       });
     }
 
-    // Notify — but suppress self-adds (the owner/authed user).
     const isFirstSeed = !playlist.snapshotId;
     let notified = 0;
     if (!isFirstSeed && playlist.notifyEnabled) {
-      const toNotify = filterSelfAdds(added, user.spotifyId);
-      for (const t of toNotify) {
+      for (const t of added) {
         const artistStr = t.artists.join(", ");
         const { sent } = await sendPushToUser(user.id, {
           title: `New in ${meta.data.name}`,
