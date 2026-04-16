@@ -184,7 +184,7 @@ export async function pollPlaylist(
     const isFirstSeed = !playlist.snapshotId;
     let notified = 0;
     if (!isFirstSeed && playlist.notifyEnabled) {
-      const toNotify = added;
+      const toNotify = filterSelfAdds(added, user.spotifyId);
       for (const t of toNotify) {
         const artistStr = t.artists.join(", ");
         const { sent } = await sendPushToUser(user.id, {
@@ -278,6 +278,19 @@ export async function pollPlaylist(
   }
 }
 
+// Safety cap: never poll more than this many playlists per cron run.
+// A user with 100 playlists at ~2 API calls each = 200 calls in one
+// function invocation, which would blow through the per-instance budget.
+// 50 playlists × ~2 calls = ~100 calls, well within the 20/30s budget
+// spread across the sequential polling delays.
+const MAX_PLAYLISTS_PER_RUN = 50;
+
+// Circuit breaker: if this many consecutive playlists fail (non-429),
+// abort the remaining polls. Prevents a cascade of failures from
+// burning API calls on a systemic issue (e.g. revoked token, Spotify
+// outage).
+const CIRCUIT_BREAKER_THRESHOLD = 3;
+
 export async function pollAllForUser(user: User): Promise<PollResult[]> {
   // Only poll playlists whose lastCheckedAt is older than the staleness
   // threshold, or has never been checked at all. This prevents a cron
@@ -300,10 +313,12 @@ export async function pollAllForUser(user: User): Promise<PollResult[]> {
     // Without this, a 429 that short-circuits the loop could
     // repeatedly starve the same playlists.
     orderBy: [{ lastCheckedAt: "asc" }, { createdAt: "asc" }],
+    take: MAX_PLAYLISTS_PER_RUN,
   });
   const results: PollResult[] = [];
   // Sequential to keep rate-limit pressure sane.
   let u = user;
+  let consecutiveFailures = 0;
   for (const p of playlists) {
     const r = await pollPlaylist(u, p);
     results.push(r);
@@ -313,6 +328,20 @@ export async function pollAllForUser(user: User): Promise<PollResult[]> {
     // Short-circuit if we just tripped a 429 — further polls would
     // just bail at assertCanCallSpotify anyway.
     if (r.error?.includes("429") || r.error?.includes("cooldown")) break;
+    // Circuit breaker: consecutive non-429 failures suggest a systemic
+    // issue (revoked token, Spotify outage, etc.). Abort early to
+    // avoid burning API calls on a lost cause.
+    if (r.error) {
+      consecutiveFailures++;
+      if (consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+        console.error(
+          `poll circuit breaker: ${consecutiveFailures} consecutive failures, aborting remaining playlists`,
+        );
+        break;
+      }
+    } else {
+      consecutiveFailures = 0;
+    }
   }
   return results;
 }

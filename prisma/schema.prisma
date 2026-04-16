@@ -62,6 +62,7 @@ model Track {
   firstSeenAt     DateTime @default(now())
 
   @@unique([playlistId, spotifyTrackId, addedAt])
+  @@index([playlistId, addedAt])
   @@index([playlistId, firstSeenAt])
 }
 
@@ -73,6 +74,8 @@ model PollLog {
   durationMs  Int
   newTracks   Int      @default(0)
   error       String?
+
+  @@index([playlistId, startedAt])
 }
 
 model PushSubscription {

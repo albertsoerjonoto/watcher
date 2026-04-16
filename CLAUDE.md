@@ -1,3 +1,50 @@
+# Watcher — Spotify Playlist Monitor
+
+Monitors Spotify playlists and sends web push notifications when new tracks
+are added. Filters out self-additions. PWA-first, deployed on Vercel.
+
+## Tech Stack
+
+- **Framework:** Next.js 14 (App Router), TypeScript
+- **Database:** PostgreSQL via Prisma ORM (Supabase)
+- **Auth:** Spotify OAuth 2.0 with PKCE (no client secret required)
+- **Notifications:** Web Push (web-push library, VAPID)
+- **Styling:** Tailwind CSS (dark theme)
+- **Testing:** Vitest
+- **Deploy:** Vercel with Cron Jobs
+
+## Commands
+
+- `npm run dev` — Start dev server
+- `npm run build` — Production build (runs prisma generate + db push + next build)
+- `npm run lint` — ESLint
+- `npm test` — Vitest (includes rate-limit guardrail)
+- `npm run db:push` — Push schema to DB
+- `npm run db:seed` — Seed playlists from playlists.json
+- `npm run poll` — Manual poll (for local testing)
+
+## Key Files
+
+- `src/lib/rate-limit.ts` — Rate limit chokepoint (CRITICAL, do not weaken)
+- `src/lib/spotify.ts` — Spotify API client with 4-tier fallback chain
+- `src/lib/diff.ts` — Track diffing logic (composite key: spotifyTrackId + addedAt)
+- `src/lib/poll.ts` — Per-playlist poll orchestration
+- `src/lib/push.ts` — Web Push dispatcher (prunes dead subscriptions)
+- `src/lib/session.ts` — HMAC-signed session cookie
+- `src/app/api/cron/poll/route.ts` — Cron-triggered polling endpoint
+- `src/app/api/refresh/route.ts` — User-triggered refresh (double-gated)
+- `src/app/api/sync-status/route.ts` — DB-only status check (no Spotify calls)
+
+## Conventions
+
+- **All Spotify API calls go through `spotifyFetch()`** in rate-limit.ts — NEVER raw fetch()
+- **Snapshot ID short-circuits:** only full-fetch if playlist changed
+- **Track identity:** `(spotifyTrackId, addedAt)` tuple, not just ID
+- **First-seed silence:** suppress notifications on initial playlist add
+- **Owner filter:** don't notify user about their own additions
+- **Sequential polling:** playlists polled one-at-a-time to keep rate-limit pressure sane
+- **Timestamps:** Jakarta timezone (UTC+7) for display via `src/lib/datetime.ts`
+
 # Git
 
 - **GitHub noreply email:** `29353764+albertsoerjonoto@users.noreply.github.com`
@@ -51,8 +98,8 @@ find yourself wanting to bypass one, stop and read this file again.
    "because it didn't know" — the guard reads the DB-backed value.
 
 3. **We maintain our own rolling-30s budget** in `rate-limit.ts`
-   (`BUDGET_MAX_REQUESTS = 60`). This rejects proactively, before
-   Spotify gets a chance to see a request we shouldn't have made. 60
+   (`BUDGET_MAX_REQUESTS = 20`). This rejects proactively, before
+   Spotify gets a chance to see a request we shouldn't have made. 20
    is well under whatever the real dev-mode ceiling is — do not raise
    it without a very good reason.
 

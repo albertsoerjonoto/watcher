@@ -24,7 +24,12 @@ export async function PATCH(
 ) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "unauth" }, { status: 401 });
-  const body = await request.json();
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "invalid json" }, { status: 400 });
+  }
   const data: { notifyEnabled?: boolean; sortOrder?: number } = {};
   if (typeof body.notifyEnabled === "boolean") {
     data.notifyEnabled = body.notifyEnabled;

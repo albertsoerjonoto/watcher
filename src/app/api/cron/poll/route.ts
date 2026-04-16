@@ -15,8 +15,12 @@ function authorized(request: Request): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
   const header = request.headers.get("authorization") ?? "";
-  const fromVercel = request.headers.get("x-vercel-cron"); // Vercel Cron
-  if (fromVercel) return true;
+  // Vercel strips x-vercel-cron from external requests, so this header
+  // is trustworthy when the app is deployed on Vercel. In other
+  // environments it could be spoofed, so we still require the Bearer
+  // token as a fallback.
+  const fromVercel = request.headers.get("x-vercel-cron");
+  if (fromVercel && process.env.VERCEL) return true;
   return header === `Bearer ${secret}`;
 }
 
