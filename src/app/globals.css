@@ -7,5 +7,9 @@
 }
 body {
   @apply bg-neutral-950 text-neutral-100 antialiased;
-  overflow-x: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+body::-webkit-scrollbar {
+  display: none;
 }
