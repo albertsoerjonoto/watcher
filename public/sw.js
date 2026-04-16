@@ -23,7 +23,7 @@ self.addEventListener("push", (event) => {
     icon: "/icon.svg",
     badge: "/icon.svg",
     data: { url: data.url || "/" },
-    tag: data.trackId || undefined,
+    tag: data.playlistId || undefined,
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });
