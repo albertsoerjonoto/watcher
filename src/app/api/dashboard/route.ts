@@ -1,7 +1,16 @@
+// GET /api/dashboard
+//
+// Returns all data the dashboard client component needs in a single
+// round-trip: playlists (with track counts), recent tracks per playlist,
+// week counts, and latest poll errors. Designed to be the SWR cache key
+// so page transitions are instant (stale-while-revalidate).
+//
+// No Spotify calls — pure DB reads.
+
+import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
-import { DashboardContent } from "@/components/DashboardContent";
 import type {
   PlaylistRow,
   TrackRow,
@@ -9,29 +18,12 @@ import type {
 
 export const dynamic = "force-dynamic";
 
-export default async function DashboardPage() {
-  const user = await getCurrentUser();
-  if (!user) {
-    return (
-      <section className="py-16 text-center">
-        <h1 className="mb-4 text-2xl font-semibold">Watcher</h1>
-        <p className="mb-6 text-neutral-400">
-          Sign in with Spotify to start watching playlists for new tracks.
-        </p>
-        <a
-          href="/api/auth/login"
-          className="inline-block rounded-full bg-spotify px-6 py-3 font-semibold text-black"
-        >
-          Sign in with Spotify
-        </a>
-      </section>
-    );
-  }
+const RECENT_PER_PLAYLIST = 5;
 
-  // Fetch all dashboard data in a single round-trip. This serves as
-  // SWR fallbackData so the first render is instant (SSR), and SWR
-  // revalidates from /api/dashboard in the background on subsequent
-  // navigations.
+export async function GET() {
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: "unauth" }, { status: 401 });
+
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const playlists = await prisma.playlist.findMany({
     where: { userId: user.id },
@@ -40,7 +32,6 @@ export default async function DashboardPage() {
   });
   const playlistIds = playlists.map((p) => p.id);
 
-  const RECENT_PER_PLAYLIST = 5;
   const [weekCounts, lastErrors, allRecentTracks, hasPushSub] =
     await Promise.all([
       prisma.track.groupBy({
@@ -86,7 +77,7 @@ export default async function DashboardPage() {
         .then((n) => n > 0),
     ]);
 
-  // Serialise for client.
+  // Serialise for the client.
   const playlistRows: PlaylistRow[] = playlists.map((p) => ({
     id: p.id,
     spotifyId: p.spotifyId,
@@ -117,6 +108,7 @@ export default async function DashboardPage() {
     }
     recentByPlaylist[t.playlistId].push(row);
   }
+  // Sort each bucket by addedAt desc.
   for (const bucket of Object.values(recentByPlaylist)) {
     bucket.sort(
       (a, b) => new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime(),
@@ -131,6 +123,7 @@ export default async function DashboardPage() {
     if (r.playlistId && r.error) errorByPlaylist[r.playlistId] = r.error;
   }
 
+  // Derived flags.
   const needsReauth = Object.values(errorByPlaylist).some((e) =>
     e.toLowerCase().includes("token refresh failed"),
   );
@@ -141,21 +134,17 @@ export default async function DashboardPage() {
     })
     .reduce((a, b) => Math.max(a, b), 0);
 
-  return (
-    <DashboardContent
-      fallbackData={{
-        playlists: playlistRows,
-        recentByPlaylist,
-        weekByPlaylist,
-        errorByPlaylist,
-        hasPushSub,
-        needsReauth,
-        cooldownSeconds,
-        user: {
-          displayName: user.displayName,
-          spotifyId: user.spotifyId,
-        },
-      }}
-    />
-  );
+  return NextResponse.json({
+    playlists: playlistRows,
+    recentByPlaylist,
+    weekByPlaylist,
+    errorByPlaylist,
+    hasPushSub,
+    needsReauth,
+    cooldownSeconds,
+    user: {
+      displayName: user.displayName,
+      spotifyId: user.spotifyId,
+    },
+  });
 }

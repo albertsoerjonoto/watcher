@@ -295,6 +295,11 @@ export async function pollAllForUser(user: User): Promise<PollResult[]> {
         { lastCheckedAt: { lt: staleCutoff } },
       ],
     },
+    // Deterministic ordering: never-checked playlists first (null sorts
+    // before any date in ascending order), then oldest-checked next.
+    // Without this, a 429 that short-circuits the loop could
+    // repeatedly starve the same playlists.
+    orderBy: [{ lastCheckedAt: "asc" }, { createdAt: "asc" }],
   });
   const results: PollResult[] = [];
   // Sequential to keep rate-limit pressure sane.

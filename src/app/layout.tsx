@@ -6,6 +6,7 @@ export const metadata: Metadata = {
   title: "Watcher",
   description: "Get notified when new tracks are added to your playlists.",
   manifest: "/manifest.webmanifest",
+  icons: { icon: "/icon.svg", apple: "/icon.svg" },
   appleWebApp: { capable: true, title: "Watcher", statusBarStyle: "black-translucent" },
 };
 

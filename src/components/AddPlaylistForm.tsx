@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useSWRConfig } from "swr";
+import { DASHBOARD_KEY } from "./DashboardContent";
 
 export function AddPlaylistForm() {
-  const router = useRouter();
+  const { mutate } = useSWRConfig();
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,16 +28,12 @@ export function AddPlaylistForm() {
         playlist?: { id?: string };
       };
       setUrl("");
-      router.refresh();
-      // Kick off track seeding in the background. The server returns
-      // fast without seeding (pathfinder fallback can take longer than
-      // Vercel's 60s function budget for large playlists), so we fire
-      // the retry endpoint here and let it populate rows; AutoRefresh
-      // will reveal them on its next tick.
+      mutate(DASHBOARD_KEY);
+      // Kick off track seeding in the background.
       const newId = body.playlist?.id;
       if (newId) {
         fetch(`/api/playlists/${newId}/retry`, { method: "POST" })
-          .then(() => router.refresh())
+          .then(() => mutate(DASHBOARD_KEY))
           .catch(() => {});
       }
     } catch (err) {
