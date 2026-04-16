@@ -184,7 +184,7 @@ export async function pollPlaylist(
     const isFirstSeed = !playlist.snapshotId;
     let notified = 0;
     if (!isFirstSeed && playlist.notifyEnabled) {
-      const toNotify = added;
+      const toNotify = filterSelfAdds(added, user.spotifyId);
       for (const t of toNotify) {
         const artistStr = t.artists.join(", ");
         const { sent } = await sendPushToUser(user.id, {
