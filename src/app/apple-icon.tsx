@@ -5,7 +5,7 @@ export const contentType = "image/png";
 
 export default async function AppleIcon() {
   const fontData = await fetch(
-    "https://fonts.gstatic.com/s/inter/v18/UcCo3FwrK3iLTcviYwYZ90OsRA.woff",
+    "https://fonts.gstatic.com/s/inter/v20/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuFuYMZg.ttf",
   ).then((r) => r.arrayBuffer());
 
   return new ImageResponse(
