@@ -35,7 +35,7 @@ export async function PUT() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "unauth" }, { status: 401 });
   const result = await sendPushToUser(user.id, {
-    title: "Spotify Watcher",
+    title: "Watcher",
     body: "Test notification — if you see this, push is working.",
     url: "/",
   });

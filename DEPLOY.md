@@ -1,4 +1,4 @@
-# Deploying Spotify Playlist Watcher
+# Deploying Watcher
 
 This guide is the exact, minimum click list to get phone notifications
 working. I can't click the buttons for you — they're all tied to your
@@ -42,7 +42,7 @@ accounts are already logged in.
 ## 2. Import the repo into Vercel
 
 1. Go to <https://vercel.com/new>.
-2. **Import** the `albertsoerjonoto/spotifywatcher` repo.
+2. **Import** the `albertsoerjonoto/watcher` repo.
 3. On the configure screen:
    - **Framework**: Next.js (auto-detected)
    - **Root Directory**: leave as repo root
@@ -81,13 +81,13 @@ accounts are already logged in.
 After the build finishes, Vercel shows you a URL like:
 
 ```
-https://spotifywatcher-<hash>.vercel.app
+https://watcher-<hash>.vercel.app
 ```
 
 …or the nicer production alias:
 
 ```
-https://spotifywatcher.vercel.app
+https://watcher.vercel.app
 ```
 
 Copy whichever one is your stable production URL.
@@ -170,7 +170,7 @@ CREATE SCHEMA public;`, then redeploy.
 **Notifications don't arrive on iPhone**
 1. You must have opened the app **from the home-screen icon**, not Safari.
 2. Notification permission must be granted (Settings → Notifications →
-   SpotifyWatcher on iOS).
+   Watcher on iOS).
 3. Hit **Send test** in the app's Settings — if that works but real
    notifications don't, trigger the cron manually:
 

@@ -5,7 +5,7 @@ name: Poll playlists
 # 2,000 minutes/month on the free tier, plenty for this workload.
 #
 # Required repository secrets:
-#   APP_URL      - e.g. https://spotifywatcher.vercel.app (no trailing slash)
+#   APP_URL      - e.g. https://watcher.vercel.app (no trailing slash)
 #   CRON_SECRET  - matches CRON_SECRET set in Vercel env vars
 #
 # Note: GitHub may delay scheduled workflows during high load. Real-world
