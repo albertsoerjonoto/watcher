@@ -31,6 +31,7 @@ export async function sendPushToUser(
 ): Promise<{ sent: number; pruned: number }> {
   ensureConfigured();
   const subs = await prisma.pushSubscription.findMany({ where: { userId } });
+  console.log(`[push] userId=${userId}: found ${subs.length} subscription(s)`);
   let sent = 0;
   let pruned = 0;
   await Promise.all(

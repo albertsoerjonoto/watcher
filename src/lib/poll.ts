@@ -49,6 +49,7 @@ export async function pollPlaylist(
   const startedAt = Date.now();
   let user = userIn;
   try {
+    console.log(`[poll] ${playlist.name} (${playlist.spotifyId}): starting`);
     const meta = await fetchPlaylistMeta(user, playlist.spotifyId);
     user = meta.user;
 
@@ -66,6 +67,7 @@ export async function pollPlaylist(
       playlist.snapshotId &&
       playlist.snapshotId === meta.data.snapshot_id
     ) {
+      console.log(`[poll] ${playlist.name}: snapshot unchanged, skipping`);
       await prisma.playlist.update({
         where: { id: playlist.id },
         data: {
@@ -89,6 +91,9 @@ export async function pollPlaylist(
         notified: 0,
       };
     }
+    console.log(
+      `[poll] ${playlist.name}: snapshot changed (db=${playlist.snapshotId?.slice(0, 12)} → api=${meta.data.snapshot_id?.slice(0, 12)}), fetching tracks`,
+    );
 
     const { user: u2, tracks: incoming } = await fetchAllPlaylistTracks(
       user,
@@ -123,6 +128,9 @@ export async function pollPlaylist(
 
     const existing = await loadExistingKeys(playlist.id);
     const added = diffTracks(existing, incoming);
+    console.log(
+      `[poll] ${playlist.name}: existing=${existing.length} incoming=${incoming.length} new=${added.length}`,
+    );
 
     // Persist new rows. `firstSeenAt` defaults to now().
     // skipDuplicates is belt-and-suspenders next to the in-memory diff:
@@ -182,6 +190,9 @@ export async function pollPlaylist(
 
     const isFirstSeed = !playlist.snapshotId;
     let notified = 0;
+    console.log(
+      `[poll] ${playlist.name}: isFirstSeed=${isFirstSeed} notifyEnabled=${playlist.notifyEnabled} added=${added.length}`,
+    );
     if (!isFirstSeed && playlist.notifyEnabled && added.length > 0) {
       const MAX_SHOWN = 3;
       const lines = added
@@ -194,13 +205,19 @@ export async function pollPlaylist(
         added.length === 1
           ? `https://open.spotify.com/track/${added[0].spotifyTrackId}`
           : `https://open.spotify.com/playlist/${playlist.spotifyId}`;
-      const { sent } = await sendPushToUser(user.id, {
+      console.log(`[poll] ${playlist.name}: sending batched push (${added.length} tracks)`);
+      const { sent, pruned } = await sendPushToUser(user.id, {
         title: `New in ${meta.data.name}`,
         body: lines.join("\n"),
         playlistId: playlist.spotifyId,
         url,
       });
+      console.log(`[poll] ${playlist.name}: push result sent=${sent} pruned=${pruned}`);
       if (sent > 0) notified++;
+    } else if (added.length > 0) {
+      console.log(
+        `[poll] ${playlist.name}: SKIPPED notifications — isFirstSeed=${isFirstSeed} notifyEnabled=${playlist.notifyEnabled}`,
+      );
     }
 
     await prisma.playlist.update({
