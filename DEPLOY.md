@@ -48,9 +48,7 @@ accounts are already logged in.
    - **Root Directory**: leave as repo root
    - **Build Command**: leave default (our `package.json` already runs
      `prisma generate && prisma db push && next build`)
-   - **Production Branch**: change from `main` to
-     **`claude/spotify-playlist-watcher-MjytH`** (click Edit next to the
-     branch name). This is the branch with the code.
+   - **Production Branch**: leave as `main` (the default).
 4. Expand **Environment Variables** and paste these. Copy everything in
    the left column as the key, everything in the right as the value:
 
@@ -186,7 +184,7 @@ CREATE SCHEMA public;`, then redeploy.
 
 ## What lives where
 
-- **Code** — this repo, branch `claude/spotify-playlist-watcher-MjytH`
+- **Code** — this repo, branch `main`
 - **DB** — Supabase (Postgres, free tier)
 - **Host + cron** — Vercel (`vercel.json` defines `*/10 * * * *`)
 - **Auth** — Spotify Developer app (`Claude Code Testing`)

@@ -227,16 +227,23 @@ export function DashboardPlaylistList({
                       <div className="h-14 w-14 shrink-0 rounded bg-neutral-800" />
                     )}
                     <div className="min-w-0 flex-1">
-                      <Link
-                        href={`/playlists/${p.id}`}
-                        className="block truncate font-medium hover:underline"
-                      >
-                        {p.name === p.spotifyId ? (
-                          <span className="text-neutral-500">Loading...</span>
-                        ) : (
-                          p.name
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href={`/playlists/${p.id}`}
+                          className="min-w-0 truncate font-medium hover:underline"
+                        >
+                          {p.name === p.spotifyId ? (
+                            <span className="text-neutral-500">Loading...</span>
+                          ) : (
+                            p.name
+                          )}
+                        </Link>
+                        {weekCount > 0 && (
+                          <span className="shrink-0 rounded-full bg-spotify/20 px-2 py-0.5 text-xs text-spotify">
+                            +{weekCount} this week
+                          </span>
                         )}
-                      </Link>
+                      </div>
                       <div className="text-xs text-neutral-400">
                         {p._count.tracks} tracks · last checked{" "}
                         {formatDateTimeJakarta(p.lastCheckedAt)}
@@ -258,11 +265,6 @@ export function DashboardPlaylistList({
                         </div>
                       )}
                     </div>
-                    {weekCount > 0 && (
-                      <span className="shrink-0 rounded-full bg-spotify/20 px-2 py-1 text-xs text-spotify">
-                        +{weekCount} this week
-                      </span>
-                    )}
                     <RetryButton playlistId={p.id} />
                     <PlaylistActions
                       playlistName={p.name}
