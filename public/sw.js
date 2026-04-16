@@ -15,9 +15,9 @@ self.addEventListener("push", (event) => {
   try {
     data = event.data ? event.data.json() : {};
   } catch (e) {
-    data = { title: "Spotify Watcher", body: event.data ? event.data.text() : "" };
+    data = { title: "Watcher", body: event.data ? event.data.text() : "" };
   }
-  const title = data.title || "Spotify Watcher";
+  const title = data.title || "Watcher";
   const options = {
     body: data.body || "",
     icon: "/icon.svg",

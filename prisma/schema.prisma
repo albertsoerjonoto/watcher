@@ -1,4 +1,4 @@
-// Spotify Playlist Watcher — Phase 1 schema
+// Watcher — Phase 1 schema
 // Single-user-per-row design; multi-user ready.
 
 generator client {

@@ -1,5 +1,5 @@
 {
-  "name": "spotify-playlist-watcher",
+  "name": "watcher",
   "version": "0.1.0",
   "private": true,
   "scripts": {

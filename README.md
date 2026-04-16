@@ -1,4 +1,4 @@
-# Spotify Playlist Watcher
+# Watcher
 
 Phase 1 web app that monitors Spotify playlists and pushes a notification to
 your phone every time a new track is added. Built with Next.js 14 (App
@@ -197,7 +197,7 @@ Covers the diff logic (critical path) and `parsePlaylistId`.
 Sketch for when we get to it:
 
 - SwiftUI + iOS 17.
-- Same Spotify PKCE flow, deep-linked via `spotify-watcher://callback`.
+- Same Spotify PKCE flow, deep-linked via `watcher://callback`.
 - APNs token posted to `/api/devices` (route to add), stored in
   `DeviceToken` table. The dispatcher in `src/lib/push.ts` is structured so
   APNs fan-out can slot in next to web push with no schema changes.

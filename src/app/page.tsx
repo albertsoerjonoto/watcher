@@ -14,7 +14,7 @@ export default async function DashboardPage() {
   if (!user) {
     return (
       <section className="py-16 text-center">
-        <h1 className="mb-4 text-2xl font-semibold">Spotify Playlist Watcher</h1>
+        <h1 className="mb-4 text-2xl font-semibold">Watcher</h1>
         <p className="mb-6 text-neutral-400">
           Sign in with Spotify to start watching playlists for new tracks.
         </p>

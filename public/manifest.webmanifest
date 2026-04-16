@@ -1,6 +1,6 @@
 {
-  "name": "Spotify Playlist Watcher",
-  "short_name": "SpotifyWatcher",
+  "name": "Watcher",
+  "short_name": "Watcher",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0b0b0b",

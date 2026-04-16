@@ -3,11 +3,11 @@ import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Spotify Playlist Watcher",
+  title: "Watcher",
   description: "Get notified when new tracks are added to your playlists.",
   manifest: "/manifest.webmanifest",
   icons: { icon: "/icon.svg", apple: "/icon.svg" },
-  appleWebApp: { capable: true, title: "SpotifyWatcher", statusBarStyle: "black-translucent" },
+  appleWebApp: { capable: true, title: "Watcher", statusBarStyle: "black-translucent" },
 };
 
 export const viewport: Viewport = {
@@ -21,7 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <header className="border-b border-neutral-800">
           <nav className="mx-auto flex max-w-3xl items-center gap-4 p-4 text-sm">
             <Link href="/" className="font-semibold text-spotify">
-              SpotifyWatcher
+              Watcher
             </Link>
             <Link href="/" className="text-neutral-300 hover:text-white">
               Dashboard
