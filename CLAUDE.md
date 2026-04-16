@@ -1,3 +1,13 @@
+# Git
+
+- **GitHub noreply email:** `29353764+albertsoerjonoto@users.noreply.github.com`
+- **PR base branch:** `main`
+- **Repo:** `albertsoerjonoto/watcher`
+- **Production URL:** `https://playlistwatcher.vercel.app`
+- **Vercel project:** `https://vercel.com/albertsoerjonotos-projects/watcher`
+
+---
+
 # Spotify rate-limit prevention — DO NOT SKIP
 
 Read this before touching anything that calls `fetch()` to a spotify.com
