@@ -54,7 +54,7 @@ export function PlaylistActions({
         title="Move up"
         disabled={busy || isFirst}
         onClick={() => move("up")}
-        className="rounded border border-neutral-800 px-1.5 py-0.5 text-xs text-neutral-400 hover:bg-neutral-800 disabled:opacity-30"
+        className="rounded border border-neutral-200 px-1.5 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100 disabled:opacity-30 dark:border-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-800"
       >
         ↑
       </button>
@@ -63,7 +63,7 @@ export function PlaylistActions({
         title="Move down"
         disabled={busy || isLast}
         onClick={() => move("down")}
-        className="rounded border border-neutral-800 px-1.5 py-0.5 text-xs text-neutral-400 hover:bg-neutral-800 disabled:opacity-30"
+        className="rounded border border-neutral-200 px-1.5 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100 disabled:opacity-30 dark:border-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-800"
       >
         ↓
       </button>
@@ -72,7 +72,7 @@ export function PlaylistActions({
         title={`Delete ${playlistName}`}
         disabled={busy}
         onClick={del}
-        className="rounded border border-red-900/60 px-1.5 py-0.5 text-xs text-red-400 hover:bg-red-950/40 disabled:opacity-30"
+        className="rounded border border-red-300 px-1.5 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-30 dark:border-red-900/60 dark:text-red-400 dark:hover:bg-red-950/40"
       >
         ✕
       </button>

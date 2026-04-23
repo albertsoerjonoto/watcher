@@ -197,7 +197,7 @@ export function DashboardPlaylistList({
 
   if (playlists.length === 0) {
     return (
-      <div className="rounded-lg border border-neutral-800 p-4 text-sm text-neutral-400">
+      <div className="rounded-lg border border-neutral-200 p-4 text-sm text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
         No playlists yet. Paste a Spotify playlist URL above.
       </div>
     );
@@ -213,7 +213,7 @@ export function DashboardPlaylistList({
             </h2>
             {groupIndex === 0 && toolbar}
           </div>
-          <ul className="divide-y divide-neutral-800 rounded-lg border border-neutral-800">
+          <ul className="divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
             {rows.map((p, groupIdx) => {
               const recent = recentByPlaylist[p.id] ?? [];
               const weekCount = weekByPlaylist[p.id] ?? 0;
@@ -231,7 +231,7 @@ export function DashboardPlaylistList({
                         className="h-14 w-14 shrink-0 rounded object-cover"
                       />
                     ) : (
-                      <div className="h-14 w-14 shrink-0 rounded bg-neutral-800" />
+                      <div className="h-14 w-14 shrink-0 rounded bg-neutral-200 dark:bg-neutral-800" />
                     )}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
@@ -251,11 +251,11 @@ export function DashboardPlaylistList({
                           </span>
                         )}
                       </div>
-                      <div className="text-xs text-neutral-400">
+                      <div className="text-xs text-neutral-500 dark:text-neutral-400">
                         {p._count.tracks} songs · checked{" "}
                         {formatDateTimeJakarta(p.lastCheckedAt)}
                         {p.status !== "active" && (
-                          <span className="ml-2 text-amber-400">
+                          <span className="ml-2 text-amber-600 dark:text-amber-400">
                             ({p.status})
                           </span>
                         )}
@@ -264,8 +264,8 @@ export function DashboardPlaylistList({
                         <div
                           className={
                             isRateLimited
-                              ? "mt-1 break-all rounded bg-amber-950/60 px-2 py-1 font-mono text-[10px] text-amber-300"
-                              : "mt-1 break-all rounded bg-red-950/60 px-2 py-1 font-mono text-[10px] text-red-300"
+                              ? "mt-1 break-all rounded bg-amber-100 px-2 py-1 font-mono text-[10px] text-amber-900 dark:bg-amber-950/60 dark:text-amber-300"
+                              : "mt-1 break-all rounded bg-red-100 px-2 py-1 font-mono text-[10px] text-red-900 dark:bg-red-950/60 dark:text-red-300"
                           }
                         >
                           {error}
@@ -286,7 +286,7 @@ export function DashboardPlaylistList({
                     )}
                   </div>
                   {recent.length > 0 && (
-                    <ul className="mt-3 space-y-1 border-l border-neutral-800 pl-3 text-xs">
+                    <ul className="mt-3 space-y-1 border-l border-neutral-200 pl-3 text-xs dark:border-neutral-800">
                       {recent.map((t) => {
                         const artists = JSON.parse(t.artists) as string[];
                         return (
@@ -303,7 +303,7 @@ export function DashboardPlaylistList({
                               />
                             ) : null}
                             <span className="flex-1 truncate">
-                              <span className="text-neutral-200">
+                              <span className="text-neutral-800 dark:text-neutral-200">
                                 {t.title}
                               </span>
                               <span className="text-neutral-500">
@@ -311,7 +311,7 @@ export function DashboardPlaylistList({
                                 {artists.join(", ")}
                               </span>
                             </span>
-                            <time className="shrink-0 text-neutral-600">
+                            <time className="shrink-0 text-neutral-500 dark:text-neutral-600">
                               {formatDateJakarta(t.addedAt)}
                             </time>
                           </li>

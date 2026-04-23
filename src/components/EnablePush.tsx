@@ -109,7 +109,7 @@ export function EnablePush() {
   return (
     <div className="space-y-2">
       {subscribedHere === null && (
-        <p className="text-xs text-neutral-600">Checking subscription...</p>
+        <p className="text-xs text-neutral-500 dark:text-neutral-600">Checking subscription...</p>
       )}
       {subscribedHere === true && (
         <p className="text-xs text-spotify">
@@ -132,12 +132,12 @@ export function EnablePush() {
         <button
           onClick={test}
           disabled={busy || subscribedHere !== true}
-          className="rounded border border-neutral-700 px-3 py-1 text-sm disabled:opacity-50"
+          className="rounded border border-neutral-300 px-3 py-1 text-sm disabled:opacity-50 dark:border-neutral-700"
         >
           Send test
         </button>
       </div>
-      {status && <p className="text-xs text-neutral-400">{status}</p>}
+      {status && <p className="text-xs text-neutral-500 dark:text-neutral-400">{status}</p>}
     </div>
   );
 }

@@ -23,7 +23,7 @@ export function RetryButton({ playlistId }: { playlistId: string }) {
       type="button"
       onClick={onClick}
       disabled={busy}
-      className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
+      className="rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-700 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
     >
       {busy ? "Retrying…" : "Retry"}
     </button>

@@ -170,7 +170,7 @@ export function AutoRefresh() {
             ? `Spotify rate-limited — retry in ${state.secondsRemaining}s`
             : "Sync now"
       }
-      className="flex items-center gap-1.5 rounded border border-neutral-800 px-2 py-1 text-[10px] text-neutral-500 hover:bg-neutral-900 disabled:opacity-60"
+      className="flex items-center gap-1.5 rounded border border-neutral-200 px-2 py-1 text-[10px] text-neutral-500 hover:bg-neutral-100 dark:border-neutral-800 dark:hover:bg-neutral-900 disabled:opacity-60"
     >
       <span
         className={`inline-block h-1.5 w-1.5 rounded-full ${dotClass}`}

@@ -23,7 +23,7 @@ export default async function PlaylistPage({
   searchParams: { since?: string; order?: string; take?: string };
 }) {
   const user = await getCurrentUser();
-  if (!user) return <p className="text-neutral-400">Sign in required.</p>;
+  if (!user) return <p className="text-neutral-500 dark:text-neutral-400">Sign in required.</p>;
   const playlist = await prisma.playlist.findFirst({
     where: { id: params.id, userId: user.id },
   });
@@ -74,11 +74,11 @@ export default async function PlaylistPage({
             className="h-20 w-20 shrink-0 rounded object-cover"
           />
         ) : (
-          <div className="h-20 w-20 shrink-0 rounded bg-neutral-800" />
+          <div className="h-20 w-20 shrink-0 rounded bg-neutral-200 dark:bg-neutral-800" />
         )}
         <div className="flex-1">
           <h1 className="text-xl font-semibold">{playlist.name}</h1>
-          <p className="text-xs text-neutral-400">
+          <p className="text-xs text-neutral-500 dark:text-neutral-400">
             {hasMore
               ? `Showing ${tracks.length} of ${totalMatching} tracks`
               : `${tracks.length} tracks`}
@@ -86,7 +86,7 @@ export default async function PlaylistPage({
             {since ? ` · since ${formatDateJakarta(since)}` : ""}
           </p>
           <p className="mt-1 text-xs text-neutral-500">
-            Sorted: <span className="text-neutral-300">{orderLabel}</span>
+            Sorted: <span className="text-neutral-700 dark:text-neutral-300">{orderLabel}</span>
             {" · "}
             <Link
               href={`/playlists/${playlist.id}?order=${otherOrder}`}
@@ -97,7 +97,7 @@ export default async function PlaylistPage({
           </p>
         </div>
       </div>
-      <ul className="divide-y divide-neutral-800 rounded-lg border border-neutral-800">
+      <ul className="divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
         {tracks.map((t, i) => {
           const artists = JSON.parse(t.artists) as string[];
           return (
@@ -111,11 +111,11 @@ export default async function PlaylistPage({
                   className="h-10 w-10 shrink-0 rounded object-cover"
                 />
               ) : (
-                <div className="h-10 w-10 shrink-0 rounded bg-neutral-800" />
+                <div className="h-10 w-10 shrink-0 rounded bg-neutral-200 dark:bg-neutral-800" />
               )}
               <div className="flex-1 min-w-0">
                 <div className="truncate font-medium">{t.title}</div>
-                <div className="truncate text-xs text-neutral-400">
+                <div className="truncate text-xs text-neutral-500 dark:text-neutral-400">
                   {artists.join(", ")}
                   {t.album ? ` · ${t.album}` : ""}
                 </div>
@@ -131,7 +131,7 @@ export default async function PlaylistPage({
         <div className="pt-2 text-center">
           <Link
             href={`/playlists/${playlist.id}?order=${order}&take=${Math.min(take + DEFAULT_TAKE, MAX_TAKE)}`}
-            className="inline-block rounded border border-neutral-800 px-4 py-2 text-xs text-neutral-400 hover:bg-neutral-900"
+            className="inline-block rounded border border-neutral-200 px-4 py-2 text-xs text-neutral-600 hover:bg-neutral-100 dark:border-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-900"
           >
             Load more ({totalMatching - tracks.length} remaining)
           </Link>
