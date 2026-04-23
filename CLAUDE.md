@@ -9,7 +9,7 @@ are added. Filters out self-additions. PWA-first, deployed on Vercel.
 - **Database:** PostgreSQL via Prisma ORM (Neon)
 - **Auth:** Spotify OAuth 2.0 with PKCE (no client secret required)
 - **Notifications:** Web Push (web-push library, VAPID)
-- **Styling:** Tailwind CSS (dark theme)
+- **Styling:** Tailwind CSS (auto light/dark via `prefers-color-scheme`)
 - **Testing:** Vitest
 - **Deploy:** Vercel with Cron Jobs
 
