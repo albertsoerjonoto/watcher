@@ -63,11 +63,11 @@ export function DashboardContent({ fallbackData }: Props) {
       <InstallHint />
 
       {needsReauth && (
-        <div className="rounded-lg border border-red-700 bg-red-950/50 p-4">
-          <p className="mb-2 text-sm font-semibold text-red-200">
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-700 dark:bg-red-950/50">
+          <p className="mb-2 text-sm font-semibold text-red-900 dark:text-red-200">
             Your Spotify session expired
           </p>
-          <p className="mb-3 text-xs text-red-300">
+          <p className="mb-3 text-xs text-red-800 dark:text-red-300">
             Spotify rejected the stored refresh token. Sign in again to
             continue — this will not delete your watched playlists.
           </p>
@@ -81,7 +81,7 @@ export function DashboardContent({ fallbackData }: Props) {
       )}
 
       {cooldownSeconds > 0 && (
-        <div className="rounded-lg border border-amber-700/50 bg-amber-950/30 p-3 text-xs text-amber-200">
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200">
           Spotify is rate-limiting us right now. Syncing will resume in
           ~{cooldownSeconds}s. Existing tracks and dates aren&apos;t
           affected.
@@ -89,11 +89,11 @@ export function DashboardContent({ fallbackData }: Props) {
       )}
 
       {!hasPushSub && (
-        <div className="rounded-lg border border-amber-700/50 bg-amber-950/30 p-4">
-          <p className="mb-2 text-sm font-semibold text-amber-200">
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-700/50 dark:bg-amber-950/30">
+          <p className="mb-2 text-sm font-semibold text-amber-900 dark:text-amber-200">
             Notifications aren&apos;t enabled on this device
           </p>
-          <p className="mb-3 text-xs text-amber-300/90">
+          <p className="mb-3 text-xs text-amber-800 dark:text-amber-300/90">
             The whole point of this app is to ping you when new songs are
             added to a watched playlist. Open Settings to subscribe — on
             iPhone you must add the app to your Home Screen first.
@@ -120,14 +120,14 @@ export function DashboardContent({ fallbackData }: Props) {
             <button
               type="button"
               onClick={() => { setShowAdd(!showAdd); if (editing) setEditing(false); }}
-              className={showAdd ? "font-medium text-spotify" : "text-neutral-400 hover:text-white"}
+              className={showAdd ? "font-medium text-spotify" : "text-neutral-500 hover:text-black dark:text-neutral-400 dark:hover:text-white"}
             >
               Add
             </button>
             <button
               type="button"
               onClick={() => { setEditing(!editing); if (showAdd) setShowAdd(false); }}
-              className={editing ? "font-medium text-spotify" : "text-neutral-400 hover:text-white"}
+              className={editing ? "font-medium text-spotify" : "text-neutral-500 hover:text-black dark:text-neutral-400 dark:hover:text-white"}
             >
               Edit
             </button>

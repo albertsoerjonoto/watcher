@@ -19,7 +19,7 @@ interface FeedRow {
 export default async function FeedPage() {
   const user = await getCurrentUser();
   if (!user) {
-    return <p className="text-neutral-400">Sign in to view the feed.</p>;
+    return <p className="text-neutral-500 dark:text-neutral-400">Sign in to view the feed.</p>;
   }
 
   // Only show tracks added to Spotify playlists AFTER the user started
@@ -46,7 +46,7 @@ export default async function FeedPage() {
     <section className="space-y-6">
       <h1 className="text-xl font-semibold">Feed</h1>
       {groups.size === 0 && (
-        <p className="text-sm text-neutral-400">
+        <p className="text-sm text-neutral-500 dark:text-neutral-400">
           No tracks yet. Add some playlists from the dashboard.
         </p>
       )}
@@ -55,7 +55,7 @@ export default async function FeedPage() {
           <h2 className="mb-2 text-xs uppercase tracking-wide text-neutral-500">
             {formatDateJakarta(day)}
           </h2>
-          <ul className="divide-y divide-neutral-800 rounded-lg border border-neutral-800">
+          <ul className="divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
             {items.map((e) => {
               const artists = JSON.parse(e.artists) as string[];
               return (
@@ -68,11 +68,11 @@ export default async function FeedPage() {
                       className="h-10 w-10 shrink-0 rounded object-cover"
                     />
                   ) : (
-                    <div className="h-10 w-10 shrink-0 rounded bg-neutral-800" />
+                    <div className="h-10 w-10 shrink-0 rounded bg-neutral-200 dark:bg-neutral-800" />
                   )}
                   <div className="flex-1 min-w-0">
                     <div className="truncate font-medium">{e.title}</div>
-                    <div className="truncate text-xs text-neutral-400">
+                    <div className="truncate text-xs text-neutral-500 dark:text-neutral-400">
                       {artists.join(", ")} ·{" "}
                       <Link
                         href={`/playlists/${e.playlistId}`}

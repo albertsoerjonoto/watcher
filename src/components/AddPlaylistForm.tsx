@@ -45,12 +45,12 @@ export function AddPlaylistForm() {
 
   return (
     <form onSubmit={onSubmit} className="space-y-2">
-      <label className="block text-sm text-neutral-400">
+      <label className="block text-sm text-neutral-500 dark:text-neutral-400">
         Add a Spotify playlist
       </label>
       <div className="flex gap-2">
         <input
-          className="flex-1 rounded border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm"
+          className="flex-1 rounded border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm dark:border-neutral-800 dark:bg-neutral-900"
           placeholder="https://open.spotify.com/playlist/..."
           value={url}
           onChange={(e) => setUrl(e.target.value)}
@@ -64,7 +64,7 @@ export function AddPlaylistForm() {
           {busy ? "Adding…" : "Add"}
         </button>
       </div>
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
     </form>
   );
 }
