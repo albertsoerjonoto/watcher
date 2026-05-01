@@ -1065,9 +1065,6 @@ export async function fetchUserPublicPlaylists(
 
   // Tier 2: Client Credentials (app token). Returns null silently if
   // SPOTIFY_CLIENT_SECRET is not configured or first page is blocked.
-  // If the call succeeds but returns 0 playlists, we still try tier 3
-  // before accepting that as truth — Spotify's app-token visibility is
-  // sometimes narrower than anon-token visibility for restricted users.
   const appResult = await fetchUserPublicPlaylistsWithAppToken(spotifyUserId);
   if (appResult && appResult.playlists.length > 0) {
     console.warn(
@@ -1076,32 +1073,43 @@ export async function fetchUserPublicPlaylists(
     return { user, playlists: appResult.playlists, truncated: appResult.truncated };
   }
 
-  // Tier 3: anonymous token scraped from an embed page.
-  const anonResult = await fetchUserPublicPlaylistsWithAnonToken(spotifyUserId);
-  if (anonResult && anonResult.playlists.length > 0) {
+  // App token reachable but found 0 playlists — accept as truth (the
+  // user genuinely has no public playlists Spotify is exposing to us).
+  if (appResult) {
     console.warn(
-      `[fetchUserPublicPlaylists] tier 3 (anon token) returned ${anonResult.playlists.length} for ${spotifyUserId} after tier 1 returned ${firstTierError?.status}`,
+      `[fetchUserPublicPlaylists] tier 2 reachable but 0 playlists for ${spotifyUserId} — treating as empty`,
     );
-    return { user, playlists: anonResult.playlists, truncated: anonResult.truncated };
+    return { user, playlists: appResult.playlists, truncated: appResult.truncated };
   }
 
-  // If both fallbacks succeeded with 0 playlists each, that's a strong
-  // signal the user genuinely has no public playlists — accept it.
-  if (appResult || anonResult) {
-    const fallback = appResult ?? anonResult!;
-    console.warn(
-      `[fetchUserPublicPlaylists] all tiers reachable but no public playlists for ${spotifyUserId} — treating as empty`,
-    );
-    return { user, playlists: fallback.playlists, truncated: fallback.truncated };
-  }
-
-  // All tiers failed — surface the original tier-1 error so the user
-  // sees the most specific message Spotify gave us.
-  throw firstTierError ?? new SpotifyError(
-    403,
-    null,
-    `Could not fetch public playlists for Spotify user "${spotifyUserId}".`,
+  // No fallbacks succeeded. We DO NOT escalate to a Tier 3 anonymous-
+  // token fetch against api.spotify.com — that path triggered a
+  // 17-minute global cooldown when we tried it (May 2026). Spotify's
+  // anonymous Web API quota is shared across all anon callers from
+  // Vercel's IP range, and a 429 there poisons our entire app.
+  //
+  // If you find yourself wanting to add a Tier 3 here:
+  //   - Do NOT go through api.spotify.com on an anonymous bearer.
+  //   - Pathfinder GraphQL on api-partner is a separate quota pool —
+  //     that's the right place to look.
+  //   - Make sure to gate via spotifyFetch (which it is by definition).
+  const isAppTokenConfigured = Boolean(
+    process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET,
   );
+  const hint = isAppTokenConfigured
+    ? "App token fallback was attempted but Spotify also blocked it."
+    : "App token fallback is not configured (SPOTIFY_CLIENT_SECRET is unset). Adding it to your Vercel env may unblock this user.";
+  throw firstTierError
+    ? new SpotifyError(
+        firstTierError.status,
+        firstTierError.body,
+        `Spotify user "${spotifyUserId}" cannot be watched. ${firstTierError.message.includes("/playlists returned") ? "" : `(/users/${spotifyUserId}/playlists returned ${firstTierError.status}.) `}${hint}`,
+      )
+    : new SpotifyError(
+        403,
+        null,
+        `Could not fetch public playlists for Spotify user "${spotifyUserId}". ${hint}`,
+      );
 }
 
 /**
@@ -1177,61 +1185,6 @@ async function fetchUserPublicPlaylistsWithAppToken(
     if (!res.ok) {
       // First-page failure → no fallback (Spotify also blocks app token).
       // Later-page failure → keep what we collected.
-      if (page === 0) return null;
-      return { playlists: out, truncated };
-    }
-    const data = await res.json<SpotifyUserPlaylistsPage>();
-    const items = Array.isArray(data?.items) ? data.items : [];
-    for (const it of items) {
-      if (it && it.id) out.push(it);
-    }
-    if (!data?.next) {
-      return { playlists: out, truncated: false };
-    }
-    if (page === MAX_USER_PLAYLIST_PAGES - 1 && data.next) {
-      truncated = true;
-    }
-  }
-  return { playlists: out, truncated };
-}
-
-/**
- * Tier 3: anonymous token (scraped from a stable public embed page)
- * fetch. Returns null if the token can't be obtained, the call 403s,
- * or a 429 is encountered.
- *
- * Why this works: the anonymous token has no user identity attached, so
- * per-account privacy settings ("third-party access disabled") don't
- * apply. The endpoint is the same /users/{id}/playlists, just with a
- * different auth context.
- */
-const ANON_BOOTSTRAP_PLAYLIST_ID = "37i9dQZF1DXcBWIGoYBM5M"; // Today's Top Hits — stable, public, Spotify-curated.
-
-async function fetchUserPublicPlaylistsWithAnonToken(
-  spotifyUserId: string,
-): Promise<{
-  playlists: SpotifyUserPlaylistItem[];
-  truncated: boolean;
-} | null> {
-  const tok = await fetchAnonAccessToken(ANON_BOOTSTRAP_PLAYLIST_ID);
-  if (!tok) return null;
-
-  const out: SpotifyUserPlaylistItem[] = [];
-  let truncated = false;
-
-  for (let page = 0; page < MAX_USER_PLAYLIST_PAGES; page++) {
-    const offset = page * 50;
-    let res: SpotifyFetchResultLike;
-    try {
-      res = await spotifyFetch(
-        `${API}/users/${encodeURIComponent(spotifyUserId)}/playlists?limit=50&offset=${offset}`,
-        { headers: { Authorization: `Bearer ${tok}` } },
-      );
-    } catch (e) {
-      if (e instanceof SpotifyRateLimitError) return null;
-      throw e;
-    }
-    if (!res.ok) {
       if (page === 0) return null;
       return { playlists: out, truncated };
     }
