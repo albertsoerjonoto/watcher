@@ -950,3 +950,99 @@ export function parsePlaylistId(input: string): string | null {
   if (urlMatch) return urlMatch[1];
   return null;
 }
+
+// Spotify user IDs are looser than playlist IDs — they can include dots,
+// hyphens, and underscores, and there's no minimum length (legacy numeric
+// ids like "179366" are 6 chars). Don't enforce min length or charset
+// beyond ruling out whitespace and structural URL/URI noise.
+export function parseUserId(input: string): string | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  const uriMatch = trimmed.match(/^spotify:user:([A-Za-z0-9._-]+)/);
+  if (uriMatch) return decodeURIComponent(uriMatch[1]);
+  const urlMatch = trimmed.match(
+    /open\.spotify\.com\/(?:intl-[a-z]+\/)?user\/([A-Za-z0-9._-]+)/,
+  );
+  if (urlMatch) return decodeURIComponent(urlMatch[1]);
+  if (/^[A-Za-z0-9._-]+$/.test(trimmed)) return trimmed;
+  return null;
+}
+
+// Spotify user-profile metadata we care about.
+export interface SpotifyUserProfile {
+  id: string;
+  display_name?: string;
+  images?: SpotifyImage[];
+}
+
+export async function fetchUserProfile(user: User, spotifyUserId: string) {
+  return spotifyGet<SpotifyUserProfile>(
+    user,
+    `/users/${encodeURIComponent(spotifyUserId)}`,
+  );
+}
+
+// One playlist as returned in /users/{id}/playlists. Trimmed to fields we
+// actually persist on Playlist.
+export interface SpotifyUserPlaylistItem {
+  id: string;
+  name: string;
+  snapshot_id?: string;
+  images?: SpotifyImage[];
+  owner: { id: string; display_name?: string };
+  // `public` is nullable on the API for collaborative playlists; we don't
+  // filter on it client-side because /users/{id}/playlists already returns
+  // only the user's public-visible set.
+  public?: boolean | null;
+}
+
+interface SpotifyUserPlaylistsPage {
+  items: SpotifyUserPlaylistItem[];
+  next: string | null;
+  total: number;
+}
+
+// Cap on how many public playlists we fetch per add/sync. Each page is one
+// Spotify call; 4 pages × 50 = 200. The cap exists so a watched user with
+// thousands of playlists can't fan out a multi-minute fetch and stall the
+// request thread (or burn budget). If we ever hit it, log + surface
+// `truncated: true` so it shows up in error reporting.
+const MAX_USER_PLAYLIST_PAGES = 4;
+
+/**
+ * Fetch the watched user's public playlists. Up to 200 (4 × 50). Each
+ * page goes through spotifyGet → spotifyFetch and is therefore guarded
+ * by the rate-limit chokepoint and may rotate the user's access token.
+ */
+export async function fetchUserPublicPlaylists(
+  userIn: User,
+  spotifyUserId: string,
+): Promise<{
+  user: User;
+  playlists: SpotifyUserPlaylistItem[];
+  truncated: boolean;
+}> {
+  let user = userIn;
+  const out: SpotifyUserPlaylistItem[] = [];
+  let truncated = false;
+
+  for (let page = 0; page < MAX_USER_PLAYLIST_PAGES; page++) {
+    const offset = page * 50;
+    const res = await spotifyGet<SpotifyUserPlaylistsPage>(
+      user,
+      `/users/${encodeURIComponent(spotifyUserId)}/playlists?limit=50&offset=${offset}`,
+    );
+    user = res.user;
+    const items = Array.isArray(res.data?.items) ? res.data.items : [];
+    for (const it of items) {
+      if (it && it.id) out.push(it);
+    }
+    if (!res.data?.next) {
+      return { user, playlists: out, truncated: false };
+    }
+    if (page === MAX_USER_PLAYLIST_PAGES - 1 && res.data.next) {
+      truncated = true;
+    }
+  }
+  return { user, playlists: out, truncated };
+}

@@ -23,12 +23,17 @@ export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "unauth" }, { status: 401 });
 
+  // Only count Main + New as "stale" — those are the sections AutoRefresh
+  // can actually refresh via /api/refresh. Other has its own 12h gate
+  // on the cron path; counting it here would make the widget perpetually
+  // think there's something to refresh when there isn't.
   const [cooldownSeconds, staleCount, totalActive] = await Promise.all([
     getCooldownSeconds(),
     prisma.playlist.count({
       where: {
         userId: user.id,
         status: "active",
+        section: { in: ["main", "new"] },
         OR: [
           { lastCheckedAt: null },
           { lastCheckedAt: { lt: new Date(Date.now() - STALE_THRESHOLD_MS) } },
@@ -36,7 +41,11 @@ export async function GET() {
       },
     }),
     prisma.playlist.count({
-      where: { userId: user.id, status: "active" },
+      where: {
+        userId: user.id,
+        status: "active",
+        section: { in: ["main", "new"] },
+      },
     }),
   ]);
 

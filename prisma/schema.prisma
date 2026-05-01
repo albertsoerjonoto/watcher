@@ -21,12 +21,38 @@ model User {
   playlists        Playlist[]
   pushSubscriptions PushSubscription[]
   deviceTokens     DeviceToken[] // reserved for Phase 2 (APNs)
+  watchedUsers     WatchedUser[]
+}
+
+// A Spotify user whose public playlists are being watched. Distinct from
+// `User` (the app/auth owner). One auth User can watch many Spotify users.
+// Today's deployment has one WatchedUser (179366) backfilled from the
+// existing Playlist.ownerSpotifyId data.
+model WatchedUser {
+  id            String     @id @default(cuid())
+  userId        String
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  spotifyId     String     // the watched Spotify user id, e.g. "179366"
+  displayName   String?
+  imageUrl      String?
+  createdAt     DateTime   @default(now())
+  lastSyncedAt  DateTime?  // last fetchUserPublicPlaylists call
+  playlists     Playlist[]
+
+  @@unique([userId, spotifyId])
+  @@index([userId])
 }
 
 model Playlist {
   id               String    @id @default(cuid())
   userId           String
   user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Watched-user attachment. Nullable because POST /api/playlists deliberately
+  // makes no Spotify call on the hot path — ownerSpotifyId isn't known until
+  // the first successful pollPlaylist, which is when watchedUserId is wired
+  // up via the post-poll attach hook in src/lib/poll.ts.
+  watchedUserId    String?
+  watchedUser      WatchedUser? @relation(fields: [watchedUserId], references: [id], onDelete: Restrict)
   spotifyId        String
   name             String
   imageUrl         String?
@@ -35,6 +61,11 @@ model Playlist {
   snapshotId       String?
   status           String    @default("active") // active | unavailable
   notifyEnabled    Boolean   @default(true)
+  // Section in the dashboard. "main" = curated (cap MAX_MAIN_PER_WATCHED_USER,
+  // notifications + 10min staleness), "new" = triage queue from sync diff
+  // (notifications + 10min staleness), "other" = passive listing (12h
+  // staleness, no track-add notifications).
+  section          String    @default("main")
   sortOrder        Int       @default(0)
   lastCheckedAt    DateTime?
   imageBackfillAt  DateTime?
@@ -44,6 +75,7 @@ model Playlist {
 
   @@unique([userId, spotifyId])
   @@index([userId])
+  @@index([watchedUserId, section])
 }
 
 model Track {
