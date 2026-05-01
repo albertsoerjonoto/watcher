@@ -46,11 +46,18 @@ export async function POST() {
   // Gate 2: staleness. A playlist freshly polled 5 seconds ago doesn't
   // need re-polling; skip it. The user can still force a full refresh
   // via the per-playlist Retry button or by waiting for the next tick.
+  //
+  // Section gate: only refresh Main + New on user-triggered refresh.
+  // Other has its own 12h staleness threshold (cron-only) — refreshing
+  // 50+ Other-section playlists every time the dashboard mounts would
+  // burn the rate-limit budget for no real value (Other doesn't even
+  // notify on track adds).
   const staleCutoff = new Date(Date.now() - STALE_THRESHOLD_MS);
   const stale = await prisma.playlist.findMany({
     where: {
       userId: user.id,
       status: "active",
+      section: { in: ["main", "new"] },
       OR: [
         { lastCheckedAt: null },
         { lastCheckedAt: { lt: staleCutoff } },

@@ -189,11 +189,22 @@ export async function pollPlaylist(
     }
 
     const isFirstSeed = !playlist.snapshotId;
+    // Track-add notifications fire only for Main/New. Other is a passive
+    // listing — by design we don't push when its tracks change. The
+    // "X just shared a new playlist" notification fires from the sync
+    // endpoint, not from here.
+    const sectionAllowsNotify =
+      playlist.section === "main" || playlist.section === "new";
     let notified = 0;
     console.log(
-      `[poll] ${playlist.name}: isFirstSeed=${isFirstSeed} notifyEnabled=${playlist.notifyEnabled} added=${added.length}`,
+      `[poll] ${playlist.name}: isFirstSeed=${isFirstSeed} notifyEnabled=${playlist.notifyEnabled} section=${playlist.section} added=${added.length}`,
     );
-    if (!isFirstSeed && playlist.notifyEnabled && added.length > 0) {
+    if (
+      !isFirstSeed &&
+      playlist.notifyEnabled &&
+      sectionAllowsNotify &&
+      added.length > 0
+    ) {
       const MAX_SHOWN = 3;
       const lines = added
         .slice(0, MAX_SHOWN)
@@ -216,7 +227,7 @@ export async function pollPlaylist(
       if (sent > 0) notified++;
     } else if (added.length > 0) {
       console.log(
-        `[poll] ${playlist.name}: SKIPPED notifications — isFirstSeed=${isFirstSeed} notifyEnabled=${playlist.notifyEnabled}`,
+        `[poll] ${playlist.name}: SKIPPED notifications — isFirstSeed=${isFirstSeed} notifyEnabled=${playlist.notifyEnabled} section=${playlist.section}`,
       );
     }
 
@@ -233,6 +244,38 @@ export async function pollPlaylist(
         status: "active",
       },
     });
+
+    // Post-poll attach: if this playlist isn't yet linked to a WatchedUser
+    // (e.g. it was added via POST /api/playlists, which deliberately
+    // skips Spotify on the hot path), wire it up now that we know the
+    // owner. Auto-create the WatchedUser if needed. Idempotent: if the
+    // playlist is already linked, skip.
+    if (!playlist.watchedUserId && meta.data.owner.id) {
+      const wu = await prisma.watchedUser.upsert({
+        where: {
+          userId_spotifyId: {
+            userId: user.id,
+            spotifyId: meta.data.owner.id,
+          },
+        },
+        update: {
+          // Backfill displayName if we didn't have one. Don't clobber
+          // an existing non-null displayName with another null.
+          ...(meta.data.owner.display_name
+            ? { displayName: meta.data.owner.display_name }
+            : {}),
+        },
+        create: {
+          userId: user.id,
+          spotifyId: meta.data.owner.id,
+          displayName: meta.data.owner.display_name ?? null,
+        },
+      });
+      await prisma.playlist.update({
+        where: { id: playlist.id },
+        data: { watchedUserId: wu.id },
+      });
+    }
 
     await prisma.pollLog.create({
       data: {
@@ -301,11 +344,28 @@ export async function pollPlaylist(
 }
 
 // Safety cap: never poll more than this many playlists per cron run.
-// A user with 100 playlists at ~2 API calls each = 200 calls in one
-// function invocation, which would blow through the per-instance budget.
-// 50 playlists × ~2 calls = ~100 calls, well within the 20/30s budget
-// spread across the sequential polling delays.
-const MAX_PLAYLISTS_PER_RUN = 50;
+//
+// History: was 50. Lowered to 25 when section-aware staleness was added,
+// because Other-section playlists (~50 per watched user × N users) made
+// it realistic to actually exhaust a 50-playlist queue in one tick. At
+// 50 playlists × MIN_INTERVAL_MS=500 we'd fire 50 calls in ~25s = 60
+// calls per 30s window, exceeding BUDGET_MAX_REQUESTS=20 in src/lib/
+// rate-limit.ts. The bucket would reject mid-run with `reason: "budget"`
+// (which spotifyFetch does NOT auto-retry; it only auto-retries the
+// `interval` reason — see src/lib/rate-limit.ts:290–305).
+//
+// 25 calls / 12.5s = 50/30s — still over 20/30s on raw count, BUT the
+// snapshot short-circuit means the typical poll fires only the meta call
+// (1 call/playlist), so realistic throughput is 25 calls / 12.5s ≈
+// well within budget. The mismatched-snapshot worst case (25 × 2-3 calls)
+// stretches the run to ~60s which is right at maxDuration; that's
+// acceptable because a) it's rare and b) any unfinished playlists get
+// picked up next cron tick via the lastCheckedAt asc ordering.
+//
+// Other-section drain math: ~150 Other rows / 25 per run × 1 run/day ≈
+// 6 days worst case. Acceptable for a passive-listing section that's
+// not on the notification path.
+const MAX_PLAYLISTS_PER_RUN = 25;
 
 // Circuit breaker: if this many consecutive playlists fail (non-429),
 // abort the remaining polls. Prevents a cascade of failures from
@@ -315,19 +375,39 @@ const CIRCUIT_BREAKER_THRESHOLD = 3;
 
 export async function pollAllForUser(user: User): Promise<PollResult[]> {
   // Only poll playlists whose lastCheckedAt is older than the staleness
-  // threshold, or has never been checked at all. This prevents a cron
-  // that fires more often than the staleness window from re-polling
-  // playlists we already just checked. STALE_THRESHOLD_MS is the
-  // single knob for "how often we hit Spotify".
-  const { STALE_THRESHOLD_MS } = await import("./stale");
-  const staleCutoff = new Date(Date.now() - STALE_THRESHOLD_MS);
+  // threshold for their section, or that have never been checked at
+  // all. Two thresholds:
+  //   - Main + New: STALE_THRESHOLD_MS (10 min) — same as before.
+  //   - Other:      OTHER_STALE_THRESHOLD_MS (12h) — passive listing,
+  //                 polled at most twice/day per playlist.
+  //
+  // The composed query is a flat OR of (section-set + cutoff) clauses,
+  // not a nested OR-of-ORs, because Prisma's nested OR within a single
+  // clause doesn't compose with the top-level OR the way you'd expect
+  // (it conjuncts inside the clause). Each row is matched by exactly
+  // one of the four legs.
+  const { STALE_THRESHOLD_MS, OTHER_STALE_THRESHOLD_MS } = await import(
+    "./stale"
+  );
+  const now = Date.now();
+  const mainCutoff = new Date(now - STALE_THRESHOLD_MS);
+  const otherCutoff = new Date(now - OTHER_STALE_THRESHOLD_MS);
   const playlists = await prisma.playlist.findMany({
     where: {
       userId: user.id,
       status: "active",
       OR: [
-        { lastCheckedAt: null },
-        { lastCheckedAt: { lt: staleCutoff } },
+        // Main / New: never-checked
+        { section: { in: ["main", "new"] }, lastCheckedAt: null },
+        // Main / New: stale beyond 10min
+        {
+          section: { in: ["main", "new"] },
+          lastCheckedAt: { lt: mainCutoff },
+        },
+        // Other: never-checked
+        { section: "other", lastCheckedAt: null },
+        // Other: stale beyond 12h
+        { section: "other", lastCheckedAt: { lt: otherCutoff } },
       ],
     },
     // Deterministic ordering: never-checked playlists first (null sorts

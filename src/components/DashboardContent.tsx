@@ -4,31 +4,21 @@ import { useState } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { AddPlaylistForm } from "./AddPlaylistForm";
+import { AddWatchedUserForm } from "./AddWatchedUserForm";
 import { InstallHint } from "./InstallHint";
-import {
-  DashboardPlaylistList,
-  type PlaylistRow,
-  type TrackRow,
-} from "./DashboardPlaylistList";
+import { DashboardPlaylistList } from "./DashboardPlaylistList";
+import { DASHBOARD_KEY } from "./dashboard-keys";
+import type { DashboardData } from "@/lib/dashboard-data";
 
-interface DashboardData {
-  playlists: PlaylistRow[];
-  recentByPlaylist: Record<string, TrackRow[]>;
-  weekByPlaylist: Record<string, number>;
-  errorByPlaylist: Record<string, string>;
-  hasPushSub: boolean;
-  needsReauth: boolean;
-  cooldownSeconds: number;
-  user: { displayName: string | null; spotifyId: string };
-}
+// Re-export so existing callers that imported DASHBOARD_KEY from
+// DashboardContent keep working (e.g. AddPlaylistForm).
+export { DASHBOARD_KEY };
 
 const fetcher = (url: string) =>
   fetch(url).then((r) => {
     if (!r.ok) throw new Error(`${r.status}`);
     return r.json();
   });
-
-export const DASHBOARD_KEY = "/api/dashboard";
 
 interface Props {
   fallbackData: DashboardData;
@@ -37,14 +27,13 @@ interface Props {
 export function DashboardContent({ fallbackData }: Props) {
   const { data } = useSWR<DashboardData>(DASHBOARD_KEY, fetcher, {
     fallbackData,
-    // Revalidate on focus so tab-switching shows fresh data instantly.
     revalidateOnFocus: true,
-    // 30s dedup window — prevents rapid refetches.
     dedupingInterval: 30_000,
   });
 
   // data is always defined because of fallbackData.
   const {
+    watchedUsers,
     playlists,
     recentByPlaylist,
     weekByPlaylist,
@@ -52,10 +41,10 @@ export function DashboardContent({ fallbackData }: Props) {
     hasPushSub,
     needsReauth,
     cooldownSeconds,
-    user,
   } = data!;
 
   const [showAdd, setShowAdd] = useState(false);
+  const [showAddWatchedUser, setShowAddWatchedUser] = useState(false);
   const [editing, setEditing] = useState(false);
 
   return (
@@ -107,9 +96,20 @@ export function DashboardContent({ fallbackData }: Props) {
         </div>
       )}
 
-      {showAdd && <AddPlaylistForm />}
+      {showAddWatchedUser && (
+        <div className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
+          <AddWatchedUserForm />
+        </div>
+      )}
+
+      {showAdd && (
+        <div className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
+          <AddPlaylistForm />
+        </div>
+      )}
 
       <DashboardPlaylistList
+        watchedUsers={watchedUsers}
         playlists={playlists}
         recentByPlaylist={recentByPlaylist}
         weekByPlaylist={weekByPlaylist}
@@ -119,15 +119,46 @@ export function DashboardContent({ fallbackData }: Props) {
           <div className="flex items-center gap-3 text-sm">
             <button
               type="button"
-              onClick={() => { setShowAdd(!showAdd); if (editing) setEditing(false); }}
-              className={showAdd ? "font-medium text-spotify" : "text-neutral-500 hover:text-black dark:text-neutral-400 dark:hover:text-white"}
+              onClick={() => {
+                setShowAddWatchedUser(!showAddWatchedUser);
+                if (showAdd) setShowAdd(false);
+                if (editing) setEditing(false);
+              }}
+              className={
+                showAddWatchedUser
+                  ? "font-medium text-spotify"
+                  : "text-neutral-500 hover:text-black dark:text-neutral-400 dark:hover:text-white"
+              }
             >
-              Add
+              Watch user
             </button>
             <button
               type="button"
-              onClick={() => { setEditing(!editing); if (showAdd) setShowAdd(false); }}
-              className={editing ? "font-medium text-spotify" : "text-neutral-500 hover:text-black dark:text-neutral-400 dark:hover:text-white"}
+              onClick={() => {
+                setShowAdd(!showAdd);
+                if (showAddWatchedUser) setShowAddWatchedUser(false);
+                if (editing) setEditing(false);
+              }}
+              className={
+                showAdd
+                  ? "font-medium text-spotify"
+                  : "text-neutral-500 hover:text-black dark:text-neutral-400 dark:hover:text-white"
+              }
+            >
+              Add playlist
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEditing(!editing);
+                if (showAdd) setShowAdd(false);
+                if (showAddWatchedUser) setShowAddWatchedUser(false);
+              }}
+              className={
+                editing
+                  ? "font-medium text-spotify"
+                  : "text-neutral-500 hover:text-black dark:text-neutral-400 dark:hover:text-white"
+              }
             >
               Edit
             </button>

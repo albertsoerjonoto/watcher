@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parsePlaylistId, extractTracksPage } from "./spotify";
+import { parsePlaylistId, parseUserId, extractTracksPage } from "./spotify";
 
 describe("parsePlaylistId", () => {
   it("accepts a bare id", () => {
@@ -28,6 +28,52 @@ describe("parsePlaylistId", () => {
   });
   it("returns null for garbage", () => {
     expect(parsePlaylistId("not a playlist")).toBeNull();
+  });
+});
+
+describe("parseUserId", () => {
+  it("accepts a numeric legacy id", () => {
+    expect(parseUserId("179366")).toBe("179366");
+  });
+  it("accepts an alphanumeric id", () => {
+    expect(parseUserId("alice42")).toBe("alice42");
+  });
+  it("accepts ids with dots, hyphens, and underscores", () => {
+    expect(parseUserId("a.b-c_d")).toBe("a.b-c_d");
+  });
+  it("accepts a spotify:user URI", () => {
+    expect(parseUserId("spotify:user:179366")).toBe("179366");
+  });
+  it("accepts a spotify:user URI with special chars", () => {
+    expect(parseUserId("spotify:user:my.user_42")).toBe("my.user_42");
+  });
+  it("accepts an open.spotify.com URL", () => {
+    expect(parseUserId("https://open.spotify.com/user/179366")).toBe(
+      "179366",
+    );
+  });
+  it("accepts an intl-prefixed URL", () => {
+    expect(parseUserId("https://open.spotify.com/intl-id/user/alice")).toBe(
+      "alice",
+    );
+  });
+  it("accepts an open.spotify.com URL with query", () => {
+    expect(
+      parseUserId("https://open.spotify.com/user/179366?si=abc"),
+    ).toBe("179366");
+  });
+  it("rejects whitespace input", () => {
+    expect(parseUserId("   ")).toBeNull();
+  });
+  it("rejects an id with spaces", () => {
+    expect(parseUserId("not a user")).toBeNull();
+  });
+  it("rejects a playlist URL", () => {
+    expect(
+      parseUserId(
+        "https://open.spotify.com/playlist/7b3K3nqunOP5Wm5wvLABmf",
+      ),
+    ).toBeNull();
   });
 });
 

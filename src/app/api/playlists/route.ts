@@ -61,6 +61,13 @@ export async function POST(request: Request) {
       // overwrites it with meta.name on the first successful fetch.
       name: spotifyId,
       sortOrder: nextSortOrder,
+      // section defaults to "main" via the schema — explicitly added
+      // playlists are user-curated, so they go straight to Main.
+      // The post-poll attach hook in src/lib/poll.ts wires up
+      // watchedUserId once the owner is known. Until then, the row
+      // appears in the dashboard's "Pending" orphan group.
+      // Main cap is enforced on PATCH; on insert we accept whatever
+      // the user explicitly asked for.
     },
   });
 

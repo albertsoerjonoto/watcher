@@ -12,6 +12,7 @@
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:seed": "tsx prisma/seed.ts",
+    "db:backfill": "tsx scripts/backfill-watched-users.ts",
     "poll": "tsx scripts/poll-once.ts"
   },
   "dependencies": {
