@@ -10,12 +10,22 @@
 // watched user's quota.
 
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
 import { MAX_MAIN_PER_WATCHED_USER } from "@/lib/stale";
 
 export const dynamic = "force-dynamic";
+
+// Sentinel thrown inside the transaction when the cap check fails. Caught
+// at the top level and converted to a 409 — keeps the cap-rejection path
+// distinct from genuine errors (DB outage, serialization conflict).
+class MainCapError extends Error {
+  constructor(public mainCount: number) {
+    super("main_cap_reached");
+  }
+}
 
 const Body = z.object({
   section: z.enum(["main", "new", "other"]),
@@ -48,33 +58,70 @@ export async function PATCH(
 
   // Enforce Main cap on promotion. The cap is per (userId, watchedUserId)
   // — we count main rows scoped to the same watchedUserId (or null bucket).
-  if (target === "main") {
-    const mainCount = await prisma.playlist.count({
-      where: {
-        userId: user.id,
-        watchedUserId: playlist.watchedUserId, // null matches null in Prisma
-        section: "main",
-        // Don't double-count this row if it was already Main (we no-op'd
-        // above, but be defensive in case section semantics change).
-        NOT: { id: playlist.id },
+  //
+  // The count + update is wrapped in a Serializable transaction so two
+  // concurrent promotions can't both pass the check and leave Main
+  // overfull. PostgreSQL throws P2034 ("transaction failed due to a
+  // write conflict or a deadlock") on the loser of the race; we map
+  // that to the same 409 the user would see if they hit the cap
+  // single-threaded — semantically it IS a cap-reached, just a racy
+  // one. Without this guard the cap is enforceable only as a UX
+  // guideline, not an invariant.
+  try {
+    await prisma.$transaction(
+      async (tx) => {
+        if (target === "main") {
+          const mainCount = await tx.playlist.count({
+            where: {
+              userId: user.id,
+              watchedUserId: playlist.watchedUserId,
+              section: "main",
+              // Don't double-count this row if it was already Main
+              // (we no-op'd above, but be defensive in case section
+              // semantics change).
+              NOT: { id: playlist.id },
+            },
+          });
+          if (mainCount >= MAX_MAIN_PER_WATCHED_USER) {
+            throw new MainCapError(mainCount);
+          }
+        }
+        await tx.playlist.update({
+          where: { id: playlist.id },
+          data: { section: target },
+        });
       },
-    });
-    if (mainCount >= MAX_MAIN_PER_WATCHED_USER) {
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  } catch (e) {
+    if (e instanceof MainCapError) {
       return NextResponse.json(
         {
           error: "main_cap_reached",
-          mainCount,
+          mainCount: e.mainCount,
           cap: MAX_MAIN_PER_WATCHED_USER,
         },
         { status: 409 },
       );
     }
+    if (
+      e instanceof Prisma.PrismaClientKnownRequestError &&
+      e.code === "P2034"
+    ) {
+      // Serialization failure: another transaction promoting to Main
+      // committed between our count and our update. Treat as cap-
+      // reached so the client surfaces the same message.
+      return NextResponse.json(
+        {
+          error: "main_cap_reached",
+          mainCount: MAX_MAIN_PER_WATCHED_USER,
+          cap: MAX_MAIN_PER_WATCHED_USER,
+        },
+        { status: 409 },
+      );
+    }
+    throw e;
   }
-
-  await prisma.playlist.update({
-    where: { id: playlist.id },
-    data: { section: target },
-  });
 
   return NextResponse.json({ ok: true, section: target });
 }

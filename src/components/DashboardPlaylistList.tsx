@@ -8,6 +8,7 @@ import { RetryButton } from "./RetryButton";
 import { SectionPicker, type Section } from "./SectionPicker";
 import { DASHBOARD_KEY } from "./dashboard-keys";
 import { formatDateJakarta, formatDateTimeJakarta } from "@/lib/datetime";
+import { MAX_MAIN_PER_WATCHED_USER } from "@/lib/stale";
 
 // Re-export the shared types so existing imports
 // (`import { type PlaylistRow } from "./DashboardPlaylistList"`) keep
@@ -23,12 +24,6 @@ import type {
   TrackRow,
   WatchedUserRow,
 } from "@/lib/dashboard-data";
-
-// Main cap, mirrored from src/lib/stale.ts. Imported by reference so the
-// SectionPicker can disable promotion when full. (We don't import the
-// constants module directly because it's a server-side import path; the
-// number is a stable contract.)
-const MAX_MAIN_PER_WATCHED_USER = 12;
 
 interface Props {
   watchedUsers: WatchedUserRow[];
@@ -382,10 +377,12 @@ function WatchedUserGroup({
         );
       }
       if (!res.ok) throw new Error(body.error ?? `${res.status}`);
-      setSyncMessage(
+      const base =
         body.added && body.added > 0
           ? `Synced — ${body.added} new playlist${body.added === 1 ? "" : "s"} in New`
-          : "Synced — no new playlists",
+          : "Synced — no new playlists";
+      setSyncMessage(
+        body.truncated ? `${base} (truncated to first 200)` : base,
       );
       // Revalidate the dashboard so the New section populates immediately.
       mutate(DASHBOARD_KEY);
