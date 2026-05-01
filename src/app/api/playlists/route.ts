@@ -17,6 +17,11 @@ export async function GET() {
 
 const AddSchema = z.object({
   url: z.string().min(1),
+  // Optional section override. Default behavior: insert as "main".
+  // Bulk imports (e.g. ingesting a watched user's playlists when the
+  // sync API is blocked by privacy settings) should pass "other" so
+  // the 12-Main-per-watched-user cap isn't blown out.
+  section: z.enum(["main", "new", "other"]).optional(),
 });
 
 export async function POST(request: Request) {
@@ -61,13 +66,14 @@ export async function POST(request: Request) {
       // overwrites it with meta.name on the first successful fetch.
       name: spotifyId,
       sortOrder: nextSortOrder,
-      // section defaults to "main" via the schema — explicitly added
-      // playlists are user-curated, so they go straight to Main.
+      // Default: "main" (user-curated additions go straight to Main).
+      // Caller may override with "other" when bulk-importing a watched
+      // user's playlists discovered out-of-band (e.g. privacy lock
+      // blocked the normal sync path).
+      ...(body.data.section ? { section: body.data.section } : {}),
       // The post-poll attach hook in src/lib/poll.ts wires up
       // watchedUserId once the owner is known. Until then, the row
       // appears in the dashboard's "Pending" orphan group.
-      // Main cap is enforced on PATCH; on insert we accept whatever
-      // the user explicitly asked for.
     },
   });
 

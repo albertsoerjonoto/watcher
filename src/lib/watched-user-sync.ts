@@ -24,6 +24,11 @@ export interface SyncResult {
   total: number; // playlists currently linked to this watched user
   truncated: boolean; // we hit the 200-playlist cap
   notificationsSent: number;
+  // Set when ALL 403-tolerant fallbacks failed. The watched user's
+  // privacy settings block every Spotify auth path we have. Existing
+  // tracked playlists for this user keep being polled normally —
+  // sync just can't discover new ones from the user's profile.
+  privacyLocked?: boolean;
 }
 
 /**
@@ -83,15 +88,20 @@ export async function syncWatchedUser(
     }
   }
 
-  // Public playlists (1-4 calls). If THIS 403/404s, the watch is
-  // meaningless (we have no playlists to track), so re-throw with a
-  // clearer message that distinguishes "user not found" (404) from
-  // "user has no public playlists or has blocked third-party access"
-  // (403). The route handler maps these statuses to the same HTTP
-  // codes so the client can surface them appropriately.
-  let fetched;
+  // Public playlists (1-4 calls). 404 → user not found, re-throw.
+  // 403 → all fallback tiers in fetchUserPublicPlaylists failed
+  // (Spotify is privacy-locking this user across user OAuth, app
+  // token, and spclient). We DO NOT re-throw on 403 anymore — that
+  // would block the watched user entirely. Instead, treat sync as a
+  // no-op for this user: leave existing playlists alone (they keep
+  // getting polled because individual /playlists/{id} calls still
+  // work), update lastSyncedAt, and return privacyLocked=true so
+  // the UI can render a soft warning instead of a hard error.
+  let fetched: Awaited<ReturnType<typeof fetchUserPublicPlaylists>> | null = null;
+  let privacyLocked = false;
   try {
     fetched = await fetchUserPublicPlaylists(user, spotifyUserId);
+    user = fetched.user;
   } catch (e) {
     if (e instanceof SpotifyError && e.status === 404) {
       throw new SpotifyError(
@@ -101,15 +111,17 @@ export async function syncWatchedUser(
       );
     }
     if (e instanceof SpotifyError && e.status === 403) {
-      throw new SpotifyError(
-        403,
-        e.body,
-        `Spotify user "${spotifyUserId}" cannot be watched. Their account may have third-party access disabled, or they have no public playlists. (Spotify endpoint /users/${spotifyUserId}/playlists returned 403.)`,
+      console.warn(
+        `[syncWatchedUser] privacy-locked: all tiers 403 for ${spotifyUserId}. Existing tracked playlists keep polling.`,
       );
+      privacyLocked = true;
+      // fetched stays null → no new playlists are discovered, but the
+      // existing watched-user row + already-attached playlists are
+      // unaffected.
+    } else {
+      throw e;
     }
-    throw e;
   }
-  user = fetched.user;
 
   // Upsert the WatchedUser row with the freshly-fetched profile metadata.
   const watchedUser = await prisma.watchedUser.upsert({
@@ -138,11 +150,14 @@ export async function syncWatchedUser(
 
   // Decide what's new vs. already-tracked. Anything we already track
   // for THIS user (any section) keeps its current section; we only
-  // insert genuinely new rows.
+  // insert genuinely new rows. If fetched is null (privacy-locked),
+  // newItems stays empty — sync becomes a no-op for this user.
   const newItems: SpotifyUserPlaylistItem[] = [];
-  for (const it of fetched.playlists) {
-    if (!existingBySpotifyId.has(it.id)) {
-      newItems.push(it);
+  if (fetched) {
+    for (const it of fetched.playlists) {
+      if (!existingBySpotifyId.has(it.id)) {
+        newItems.push(it);
+      }
     }
   }
 
@@ -217,7 +232,8 @@ export async function syncWatchedUser(
     watchedUser,
     added: newItems.length,
     total,
-    truncated: fetched.truncated,
+    truncated: fetched?.truncated ?? false,
     notificationsSent,
+    privacyLocked,
   };
 }
