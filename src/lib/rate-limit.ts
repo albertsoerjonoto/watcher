@@ -230,14 +230,23 @@ export async function recordSpotifyCall(): Promise<void> {
 /**
  * Allowed Spotify hosts. Anything else passed to spotifyFetch is a bug.
  * Every fetch to one of these hosts — auth tokens, API, Pathfinder,
- * embed — shares Spotify's rate-limit bucket from their perspective,
- * so all of them must be gated.
+ * embed, spclient — shares Spotify's rate-limit bucket from their
+ * perspective, so all of them must be gated.
  */
 const SPOTIFY_HOSTS = new Set([
   "api.spotify.com",
   "accounts.spotify.com",
   "api-partner.spotify.com",
   "open.spotify.com",
+  // spclient.wg.spotify.com hosts the Spotify desktop / web app's
+  // service-client endpoints, including /user-profile-view/v3/profile
+  // which returns a user's profile + public_playlists as JSON when
+  // Accept: application/json is set. The web player uses this instead
+  // of api.spotify.com for many reads, and it can succeed for users
+  // whose api.spotify.com /users/{id}/playlists 403s on third-party
+  // privacy settings. Same per-account rate-limit bucket applies, so
+  // it MUST go through spotifyFetch.
+  "spclient.wg.spotify.com",
 ]);
 
 function isSpotifyUrl(input: string): boolean {
