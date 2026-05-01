@@ -1073,7 +1073,37 @@ export async function fetchUserPublicPlaylists(
     return { user, playlists: appResult.playlists, truncated: appResult.truncated };
   }
 
-  // App token reachable but found 0 playlists — accept as truth (the
+  // Tier 3: spclient JSON endpoint. Uses the SAME user OAuth token as
+  // Tier 1 but a different host (spclient.wg.spotify.com) and endpoint
+  // (/user-profile-view/v3/profile). Empirically, this endpoint succeeds
+  // for users whose api.spotify.com /users/{id}/playlists 403s on
+  // third-party privacy settings — Spotify exposes the public-playlist
+  // list here even when they hide it on the standard Web API.
+  //
+  // The endpoint returns Protobuf by default; passing Accept:
+  // application/json switches it to JSON. No client-token header
+  // needed when asking for JSON. Same per-account rate-limit bucket as
+  // api.spotify.com from Spotify's perspective, so still gated through
+  // spotifyFetch.
+  const spclientResult = await fetchUserPublicPlaylistsWithSpclient(
+    user,
+    spotifyUserId,
+  );
+  if (spclientResult) {
+    user = spclientResult.user;
+    if (spclientResult.playlists.length > 0) {
+      console.warn(
+        `[fetchUserPublicPlaylists] tier 3 (spclient) returned ${spclientResult.playlists.length} for ${spotifyUserId} after tier 1 returned ${firstTierError?.status}`,
+      );
+      return {
+        user,
+        playlists: spclientResult.playlists,
+        truncated: spclientResult.truncated,
+      };
+    }
+  }
+
+  // App-token reachable but found 0 playlists — accept as truth (the
   // user genuinely has no public playlists Spotify is exposing to us).
   if (appResult) {
     console.warn(
@@ -1082,23 +1112,17 @@ export async function fetchUserPublicPlaylists(
     return { user, playlists: appResult.playlists, truncated: appResult.truncated };
   }
 
-  // No fallbacks succeeded. We DO NOT escalate to a Tier 3 anonymous-
-  // token fetch against api.spotify.com — that path triggered a
-  // 17-minute global cooldown when we tried it (May 2026). Spotify's
-  // anonymous Web API quota is shared across all anon callers from
-  // Vercel's IP range, and a 429 there poisons our entire app.
-  //
-  // If you find yourself wanting to add a Tier 3 here:
-  //   - Do NOT go through api.spotify.com on an anonymous bearer.
-  //   - Pathfinder GraphQL on api-partner is a separate quota pool —
-  //     that's the right place to look.
-  //   - Make sure to gate via spotifyFetch (which it is by definition).
+  // All tiers exhausted. We do NOT escalate to an anonymous-token
+  // fetch against api.spotify.com — that path triggered a 17-minute
+  // global cooldown when we tried it (May 2026). Spotify's anonymous
+  // Web API quota is shared across all anon callers from Vercel's IP
+  // range, and a 429 there poisons our entire app.
   const isAppTokenConfigured = Boolean(
     process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET,
   );
   const hint = isAppTokenConfigured
-    ? "App token fallback was attempted but Spotify also blocked it."
-    : "App token fallback is not configured (SPOTIFY_CLIENT_SECRET is unset). Adding it to your Vercel env may unblock this user.";
+    ? "Both app-token and spclient fallbacks failed."
+    : "App-token fallback is not configured (SPOTIFY_CLIENT_SECRET is unset); spclient fallback also failed.";
   throw firstTierError
     ? new SpotifyError(
         firstTierError.status,
@@ -1201,6 +1225,138 @@ async function fetchUserPublicPlaylistsWithAppToken(
     }
   }
   return { playlists: out, truncated };
+}
+
+/**
+ * Tier 3: spclient JSON endpoint with the SAME user OAuth token as
+ * Tier 1, but a different host that exposes the public-playlist list
+ * even when the standard Web API 403s.
+ *
+ * Endpoint:
+ *   GET https://spclient.wg.spotify.com/user-profile-view/v3/profile/{id}
+ *     ?playlist_limit=200&market=from_token
+ *   Headers:
+ *     Authorization: Bearer {user_access_token}
+ *     Accept: application/json
+ *
+ * Response (JSON):
+ *   {
+ *     uri, name, image_url, followers_count, ...,
+ *     public_playlists: [
+ *       { uri: "spotify:playlist:...", name, image_url, owner_name, owner_uri }
+ *     ],
+ *     total_public_playlists_count
+ *   }
+ *
+ * The image_url field is sometimes a Spotify "mosaic" URI of the form
+ * `spotify:mosaic:{id1}:{id2}:...` rather than an HTTPS URL — we drop
+ * it on the floor in that case (the post-poll attach hook in poll.ts
+ * backfills imageUrl from the playlist's actual /playlists/{id} fetch).
+ *
+ * Returns null on 401/403/404 (escalation handled by the caller) or on
+ * 429 (don't extend the cooldown by escalating).
+ */
+async function fetchUserPublicPlaylistsWithSpclient(
+  userIn: User,
+  spotifyUserId: string,
+): Promise<{
+  user: User;
+  playlists: SpotifyUserPlaylistItem[];
+  truncated: boolean;
+} | null> {
+  let user = await ensureFreshToken(userIn);
+
+  let res: SpotifyFetchResultLike;
+  try {
+    res = await spotifyFetch(
+      `https://spclient.wg.spotify.com/user-profile-view/v3/profile/${encodeURIComponent(spotifyUserId)}?playlist_limit=200&market=from_token`,
+      {
+        headers: {
+          Authorization: `Bearer ${user.accessToken}`,
+          Accept: "application/json",
+          "App-Platform": "WebPlayer",
+        },
+      },
+    );
+  } catch (e) {
+    if (e instanceof SpotifyRateLimitError) return null;
+    throw e;
+  }
+
+  if (res.status === 401) {
+    // Token may have just expired between ensureFreshToken and the fetch.
+    // Refresh and retry once.
+    user = await refreshAccessToken(user);
+    try {
+      res = await spotifyFetch(
+        `https://spclient.wg.spotify.com/user-profile-view/v3/profile/${encodeURIComponent(spotifyUserId)}?playlist_limit=200&market=from_token`,
+        {
+          headers: {
+            Authorization: `Bearer ${user.accessToken}`,
+            Accept: "application/json",
+            "App-Platform": "WebPlayer",
+          },
+        },
+      );
+    } catch (e) {
+      if (e instanceof SpotifyRateLimitError) return null;
+      throw e;
+    }
+  }
+
+  if (!res.ok) return null;
+
+  interface SpclientProfileResponse {
+    uri?: string;
+    name?: string;
+    image_url?: string;
+    public_playlists?: Array<{
+      uri?: string;
+      name?: string;
+      image_url?: string;
+      owner_name?: string;
+      owner_uri?: string;
+    }>;
+    total_public_playlists_count?: number;
+  }
+  let data: SpclientProfileResponse;
+  try {
+    data = await res.json<SpclientProfileResponse>();
+  } catch {
+    return null;
+  }
+
+  const items = Array.isArray(data?.public_playlists) ? data.public_playlists : [];
+  const playlists: SpotifyUserPlaylistItem[] = [];
+  for (const p of items) {
+    if (!p?.uri) continue;
+    const idMatch = p.uri.match(/^spotify:playlist:([A-Za-z0-9]+)/);
+    if (!idMatch) continue;
+    const ownerIdMatch = p.owner_uri?.match(/^spotify:user:(.+)/);
+    // Drop spotify:mosaic: image URLs — they're not HTTPS. The
+    // post-poll attach hook backfills imageUrl from the playlist's
+    // /playlists/{id} fetch.
+    const imageUrl =
+      typeof p.image_url === "string" && p.image_url.startsWith("https://")
+        ? p.image_url
+        : null;
+    playlists.push({
+      id: idMatch[1],
+      name: p.name ?? idMatch[1],
+      images: imageUrl ? [{ url: imageUrl }] : undefined,
+      owner: {
+        id: ownerIdMatch?.[1] ?? spotifyUserId,
+        display_name: p.owner_name,
+      },
+    });
+  }
+
+  // Truncation: if total > what we got, mark truncated.
+  const truncated =
+    typeof data.total_public_playlists_count === "number" &&
+    data.total_public_playlists_count > playlists.length;
+
+  return { user, playlists, truncated };
 }
 
 // Local alias so we don't need to drag the full SpotifyFetchResult shape
