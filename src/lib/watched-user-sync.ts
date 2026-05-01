@@ -11,7 +11,9 @@ import { prisma } from "./db";
 import {
   fetchUserProfile,
   fetchUserPublicPlaylists,
+  SpotifyError,
   type SpotifyUserPlaylistItem,
+  type SpotifyUserProfile,
 } from "./spotify";
 import { sendPushToUser } from "./push";
 import type { User, WatchedUser } from "@prisma/client";
@@ -52,12 +54,61 @@ export async function syncWatchedUser(
   const isFirstSync = existing == null || existing.lastSyncedAt == null;
 
   // Profile (1 call). May rotate the access token.
-  const profileRes = await fetchUserProfile(userIn, spotifyUserId);
-  let user = profileRes.user;
-  const profile = profileRes.data;
+  //
+  // Tolerate 403/404 here. Some Spotify users have privacy settings that
+  // block third-party apps from reading their profile (`/users/{id}`)
+  // even though their public playlists remain accessible via
+  // `/users/{id}/playlists`. If profile is unavailable, proceed with a
+  // synthetic profile keyed only by user_id — the WatchedUser row will
+  // be created without displayName/imageUrl, and the post-poll attach
+  // hook in src/lib/poll.ts will backfill displayName from
+  // `meta.data.owner.display_name` once any of their playlists polls
+  // successfully.
+  let user = userIn;
+  let profile: SpotifyUserProfile = { id: spotifyUserId };
+  try {
+    const profileRes = await fetchUserProfile(userIn, spotifyUserId);
+    user = profileRes.user;
+    profile = profileRes.data;
+  } catch (e) {
+    if (
+      e instanceof SpotifyError &&
+      (e.status === 403 || e.status === 404)
+    ) {
+      console.warn(
+        `[syncWatchedUser] profile fetch returned ${e.status} for spotifyUserId=${spotifyUserId} — proceeding without profile metadata; will backfill displayName from playlist owner data once polled`,
+      );
+    } else {
+      throw e;
+    }
+  }
 
-  // Public playlists (1-4 calls).
-  const fetched = await fetchUserPublicPlaylists(user, spotifyUserId);
+  // Public playlists (1-4 calls). If THIS 403/404s, the watch is
+  // meaningless (we have no playlists to track), so re-throw with a
+  // clearer message that distinguishes "user not found" (404) from
+  // "user has no public playlists or has blocked third-party access"
+  // (403). The route handler maps these statuses to the same HTTP
+  // codes so the client can surface them appropriately.
+  let fetched;
+  try {
+    fetched = await fetchUserPublicPlaylists(user, spotifyUserId);
+  } catch (e) {
+    if (e instanceof SpotifyError && e.status === 404) {
+      throw new SpotifyError(
+        404,
+        e.body,
+        `Spotify user "${spotifyUserId}" not found.`,
+      );
+    }
+    if (e instanceof SpotifyError && e.status === 403) {
+      throw new SpotifyError(
+        403,
+        e.body,
+        `Spotify user "${spotifyUserId}" cannot be watched. Their account may have third-party access disabled, or they have no public playlists. (Spotify endpoint /users/${spotifyUserId}/playlists returned 403.)`,
+      );
+    }
+    throw e;
+  }
   user = fetched.user;
 
   // Upsert the WatchedUser row with the freshly-fetched profile metadata.

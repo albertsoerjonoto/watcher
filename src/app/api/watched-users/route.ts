@@ -98,12 +98,23 @@ export async function POST(request: Request) {
       truncated: result.truncated,
     });
   } catch (e) {
-    // Surface the Spotify status code so the client can show "user not
-    // found" (404) vs "rate limited" (429) vs "auth" (401) distinctly.
+    // Surface the Spotify status code so the client can render the
+    // most helpful message. 404 → user doesn't exist; 403 → user's
+    // privacy settings or app permissions block access; 429 → cooldown
+    // (the inner cooldown gate should have caught this already, but
+    // belt-and-suspenders); everything else → 502 upstream.
     if (e instanceof SpotifyError) {
+      console.error(
+        `[POST /api/watched-users] Spotify ${e.status}:`,
+        e.message,
+      );
+      const status =
+        e.status === 404 || e.status === 403 || e.status === 429
+          ? e.status
+          : 502;
       return NextResponse.json(
         { error: e.message, status: e.status },
-        { status: e.status === 404 ? 404 : 502 },
+        { status },
       );
     }
     console.error("[POST /api/watched-users] failed", e);
