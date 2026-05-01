@@ -370,6 +370,7 @@ function WatchedUserGroup({
         cooldownSeconds?: number;
         added?: number;
         truncated?: boolean;
+        privacyLocked?: boolean;
       };
       if (body.skipped === "cooldown") {
         throw new Error(
@@ -380,7 +381,9 @@ function WatchedUserGroup({
       const base =
         body.added && body.added > 0
           ? `Synced — ${body.added} new playlist${body.added === 1 ? "" : "s"} in New`
-          : "Synced — no new playlists";
+          : body.privacyLocked
+            ? "Synced — Spotify blocks new-playlist discovery for this user (existing playlists keep tracking)"
+            : "Synced — no new playlists";
       setSyncMessage(
         body.truncated ? `${base} (truncated to first 200)` : base,
       );
