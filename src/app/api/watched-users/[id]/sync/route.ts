@@ -59,9 +59,17 @@ export async function POST(
     });
   } catch (e) {
     if (e instanceof SpotifyError) {
+      console.error(
+        `[POST /api/watched-users/:id/sync] Spotify ${e.status}:`,
+        e.message,
+      );
+      const status =
+        e.status === 404 || e.status === 403 || e.status === 429
+          ? e.status
+          : 502;
       return NextResponse.json(
         { error: e.message, status: e.status },
-        { status: e.status === 404 ? 404 : 502 },
+        { status },
       );
     }
     console.error("[POST /api/watched-users/:id/sync] failed", e);
