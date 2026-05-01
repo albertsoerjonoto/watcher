@@ -123,12 +123,18 @@ export async function syncWatchedUser(
     }
   }
 
-  // Upsert the WatchedUser row with the freshly-fetched profile metadata.
-  const watchedUser = await prisma.watchedUser.upsert({
+  // Upsert the WatchedUser row with the freshly-fetched profile
+  // metadata. IMPORTANT: only overwrite displayName/imageUrl when the
+  // profile fetch actually returned a value — never wipe an existing
+  // value to null. If profile fetch 403/404'd (privacy lock), `profile`
+  // is the synthetic `{ id: spotifyUserId }` and overwriting would
+  // erase a previously-good displayName backfilled from playlist
+  // owner data on a prior poll.
+  let watchedUser = await prisma.watchedUser.upsert({
     where: { userId_spotifyId: { userId: user.id, spotifyId: spotifyUserId } },
     update: {
-      displayName: profile.display_name ?? null,
-      imageUrl: profile.images?.[0]?.url ?? null,
+      ...(profile.display_name ? { displayName: profile.display_name } : {}),
+      ...(profile.images?.[0]?.url ? { imageUrl: profile.images[0].url } : {}),
     },
     create: {
       userId: user.id,
@@ -137,6 +143,26 @@ export async function syncWatchedUser(
       imageUrl: profile.images?.[0]?.url ?? null,
     },
   });
+
+  // Backfill from playlist owner data if displayName is missing — this
+  // is the recovery path for privacy-locked users where the profile
+  // call 403s but we have polled playlists carrying ownerDisplayName.
+  if (!watchedUser.displayName) {
+    const sample = await prisma.playlist.findFirst({
+      where: {
+        userId: user.id,
+        watchedUserId: watchedUser.id,
+        ownerDisplayName: { not: null },
+      },
+      select: { ownerDisplayName: true },
+    });
+    if (sample?.ownerDisplayName) {
+      watchedUser = await prisma.watchedUser.update({
+        where: { id: watchedUser.id },
+        data: { displayName: sample.ownerDisplayName },
+      });
+    }
+  }
 
   // Read currently-linked playlists for this watched user. We diff
   // against this set to decide what's new.
