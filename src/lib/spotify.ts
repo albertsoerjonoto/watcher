@@ -1013,8 +1013,102 @@ const MAX_USER_PLAYLIST_PAGES = 4;
  * Fetch the watched user's public playlists. Up to 200 (4 × 50). Each
  * page goes through spotifyGet → spotifyFetch and is therefore guarded
  * by the rate-limit chokepoint and may rotate the user's access token.
+ *
+ * Fallback chain on 403:
+ *   - Tier 1 (default): user OAuth token. Works for most users.
+ *   - Tier 2: Client Credentials (app token). Different quota pool, not
+ *     subject to user-scope restrictions. Works if SPOTIFY_CLIENT_SECRET
+ *     is configured. Many users that 403 on Tier 1 (third-party access
+ *     disabled in their privacy settings) succeed on Tier 2 because app
+ *     tokens are not gated by user-scope privacy settings — only
+ *     playlist-level public/private state.
+ *   - Tier 3: anonymous token scraped from a public embed page, hitting
+ *     api.spotify.com directly. Same /users/{id}/playlists endpoint, but
+ *     the anonymous token has no user identity, so per-account privacy
+ *     restrictions don't apply.
+ *
+ * 429s anywhere in the chain are fatal (do NOT escalate to next tier —
+ * they all share Spotify's per-IP / per-account bucket). 403/404 from a
+ * tier triggers escalation.
  */
 export async function fetchUserPublicPlaylists(
+  userIn: User,
+  spotifyUserId: string,
+): Promise<{
+  user: User;
+  playlists: SpotifyUserPlaylistItem[];
+  truncated: boolean;
+}> {
+  let user = userIn;
+  let firstTierError: SpotifyError | null = null;
+
+  // Tier 1: user OAuth token. The vast majority of watched users go
+  // through this path successfully.
+  try {
+    const result = await fetchUserPublicPlaylistsWithUserToken(
+      user,
+      spotifyUserId,
+    );
+    return result;
+  } catch (e) {
+    if (e instanceof SpotifyError && (e.status === 403 || e.status === 404)) {
+      firstTierError = e;
+      console.warn(
+        `[fetchUserPublicPlaylists] tier 1 (user token) returned ${e.status} for ${spotifyUserId} — escalating to fallbacks`,
+      );
+      // Pick up the latest user record (token may have rotated mid-call
+      // before the 403 fired) before falling through.
+    } else {
+      throw e;
+    }
+  }
+
+  // Tier 2: Client Credentials (app token). Returns null silently if
+  // SPOTIFY_CLIENT_SECRET is not configured or first page is blocked.
+  // If the call succeeds but returns 0 playlists, we still try tier 3
+  // before accepting that as truth — Spotify's app-token visibility is
+  // sometimes narrower than anon-token visibility for restricted users.
+  const appResult = await fetchUserPublicPlaylistsWithAppToken(spotifyUserId);
+  if (appResult && appResult.playlists.length > 0) {
+    console.warn(
+      `[fetchUserPublicPlaylists] tier 2 (app token) returned ${appResult.playlists.length} for ${spotifyUserId} after tier 1 returned ${firstTierError?.status}`,
+    );
+    return { user, playlists: appResult.playlists, truncated: appResult.truncated };
+  }
+
+  // Tier 3: anonymous token scraped from an embed page.
+  const anonResult = await fetchUserPublicPlaylistsWithAnonToken(spotifyUserId);
+  if (anonResult && anonResult.playlists.length > 0) {
+    console.warn(
+      `[fetchUserPublicPlaylists] tier 3 (anon token) returned ${anonResult.playlists.length} for ${spotifyUserId} after tier 1 returned ${firstTierError?.status}`,
+    );
+    return { user, playlists: anonResult.playlists, truncated: anonResult.truncated };
+  }
+
+  // If both fallbacks succeeded with 0 playlists each, that's a strong
+  // signal the user genuinely has no public playlists — accept it.
+  if (appResult || anonResult) {
+    const fallback = appResult ?? anonResult!;
+    console.warn(
+      `[fetchUserPublicPlaylists] all tiers reachable but no public playlists for ${spotifyUserId} — treating as empty`,
+    );
+    return { user, playlists: fallback.playlists, truncated: fallback.truncated };
+  }
+
+  // All tiers failed — surface the original tier-1 error so the user
+  // sees the most specific message Spotify gave us.
+  throw firstTierError ?? new SpotifyError(
+    403,
+    null,
+    `Could not fetch public playlists for Spotify user "${spotifyUserId}".`,
+  );
+}
+
+/**
+ * Tier 1: user OAuth token fetch of /users/{id}/playlists.
+ * Up to 200 playlists (4 × 50). May rotate the access token.
+ */
+async function fetchUserPublicPlaylistsWithUserToken(
   userIn: User,
   spotifyUserId: string,
 ): Promise<{
@@ -1046,3 +1140,116 @@ export async function fetchUserPublicPlaylists(
   }
   return { user, playlists: out, truncated };
 }
+
+/**
+ * Tier 2: Client Credentials (app token) fetch. Returns null if
+ * SPOTIFY_CLIENT_SECRET is not configured, if Spotify also blocks the
+ * app token, or if a 429 is encountered (don't extend the cooldown by
+ * escalating).
+ */
+async function fetchUserPublicPlaylistsWithAppToken(
+  spotifyUserId: string,
+): Promise<{
+  playlists: SpotifyUserPlaylistItem[];
+  truncated: boolean;
+} | null> {
+  const tok = await getAppToken();
+  if (!tok) return null;
+
+  const out: SpotifyUserPlaylistItem[] = [];
+  let truncated = false;
+
+  for (let page = 0; page < MAX_USER_PLAYLIST_PAGES; page++) {
+    const offset = page * 50;
+    let res: SpotifyFetchResultLike;
+    try {
+      res = await spotifyFetch(
+        `${API}/users/${encodeURIComponent(spotifyUserId)}/playlists?limit=50&offset=${offset}`,
+        { headers: { Authorization: `Bearer ${tok}` } },
+      );
+    } catch (e) {
+      // 429 anywhere in the chain → bail. Re-thrown as SpotifyError(429)
+      // by the caller's outer try/catch in spotifyGet, but here we just
+      // give up to avoid extending the cooldown.
+      if (e instanceof SpotifyRateLimitError) return null;
+      throw e;
+    }
+    if (!res.ok) {
+      // First-page failure → no fallback (Spotify also blocks app token).
+      // Later-page failure → keep what we collected.
+      if (page === 0) return null;
+      return { playlists: out, truncated };
+    }
+    const data = await res.json<SpotifyUserPlaylistsPage>();
+    const items = Array.isArray(data?.items) ? data.items : [];
+    for (const it of items) {
+      if (it && it.id) out.push(it);
+    }
+    if (!data?.next) {
+      return { playlists: out, truncated: false };
+    }
+    if (page === MAX_USER_PLAYLIST_PAGES - 1 && data.next) {
+      truncated = true;
+    }
+  }
+  return { playlists: out, truncated };
+}
+
+/**
+ * Tier 3: anonymous token (scraped from a stable public embed page)
+ * fetch. Returns null if the token can't be obtained, the call 403s,
+ * or a 429 is encountered.
+ *
+ * Why this works: the anonymous token has no user identity attached, so
+ * per-account privacy settings ("third-party access disabled") don't
+ * apply. The endpoint is the same /users/{id}/playlists, just with a
+ * different auth context.
+ */
+const ANON_BOOTSTRAP_PLAYLIST_ID = "37i9dQZF1DXcBWIGoYBM5M"; // Today's Top Hits — stable, public, Spotify-curated.
+
+async function fetchUserPublicPlaylistsWithAnonToken(
+  spotifyUserId: string,
+): Promise<{
+  playlists: SpotifyUserPlaylistItem[];
+  truncated: boolean;
+} | null> {
+  const tok = await fetchAnonAccessToken(ANON_BOOTSTRAP_PLAYLIST_ID);
+  if (!tok) return null;
+
+  const out: SpotifyUserPlaylistItem[] = [];
+  let truncated = false;
+
+  for (let page = 0; page < MAX_USER_PLAYLIST_PAGES; page++) {
+    const offset = page * 50;
+    let res: SpotifyFetchResultLike;
+    try {
+      res = await spotifyFetch(
+        `${API}/users/${encodeURIComponent(spotifyUserId)}/playlists?limit=50&offset=${offset}`,
+        { headers: { Authorization: `Bearer ${tok}` } },
+      );
+    } catch (e) {
+      if (e instanceof SpotifyRateLimitError) return null;
+      throw e;
+    }
+    if (!res.ok) {
+      if (page === 0) return null;
+      return { playlists: out, truncated };
+    }
+    const data = await res.json<SpotifyUserPlaylistsPage>();
+    const items = Array.isArray(data?.items) ? data.items : [];
+    for (const it of items) {
+      if (it && it.id) out.push(it);
+    }
+    if (!data?.next) {
+      return { playlists: out, truncated: false };
+    }
+    if (page === MAX_USER_PLAYLIST_PAGES - 1 && data.next) {
+      truncated = true;
+    }
+  }
+  return { playlists: out, truncated };
+}
+
+// Local alias so we don't need to drag the full SpotifyFetchResult shape
+// from rate-limit.ts into this file's signatures.
+type SpotifyFetchResultLike = Awaited<ReturnType<typeof spotifyFetch>>;
