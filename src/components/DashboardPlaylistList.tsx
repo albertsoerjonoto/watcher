@@ -466,6 +466,16 @@ function WatchedUserGroup({
         added?: number;
         truncated?: boolean;
         privacyLocked?: boolean;
+        // Mirrors DiscoveryVia from src/lib/spotify.ts. Drives the
+        // adaptive copy below — different surfaces (search vs none vs
+        // canonical API) deserve different messages.
+        discoveryVia?:
+          | "api"
+          | "app-token"
+          | "spclient"
+          | "spclient-playlists"
+          | "search"
+          | "none";
       };
       if (body.skipped === "cooldown") {
         throw new Error(
@@ -473,12 +483,23 @@ function WatchedUserGroup({
         );
       }
       if (!res.ok) throw new Error(body.error ?? `${res.status}`);
+      // Adaptive copy. Treat `privacyLocked` and `discoveryVia==="none"`
+      // as equivalent — both mean every tier returned zero. The
+      // forthcoming cron loop auto-retries every 6h, so the user
+      // doesn't need to keep clicking Sync; we surface that cadence.
+      // For Tier 5 (search) hits, signal that coverage is partial
+      // because catalog search ranks by global popularity, not owner.
+      const blocked = body.privacyLocked || body.discoveryVia === "none";
       const base =
         body.added && body.added > 0
-          ? `Synced — ${body.added} new playlist${body.added === 1 ? "" : "s"} in New`
-          : body.privacyLocked
-            ? "Synced — Spotify blocks new-playlist discovery for this user (existing playlists keep tracking)"
-            : "Synced — no new playlists";
+          ? body.discoveryVia === "search"
+            ? `Synced via search — ${body.added} new playlist${body.added === 1 ? "" : "s"} in New (coverage partial; auto-retries every 6h)`
+            : `Synced — ${body.added} new playlist${body.added === 1 ? "" : "s"} in New`
+          : blocked
+            ? "Synced — no new playlists found automatically (auto-retries every 6h; paste a URL below to track one immediately)"
+            : body.discoveryVia === "search"
+              ? "Synced via search — no new playlists found (coverage partial; auto-retries every 6h)"
+              : "Synced — no new playlists";
       setSyncMessage(
         body.truncated ? `${base} (truncated to first 200)` : base,
       );
