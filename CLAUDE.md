@@ -202,16 +202,21 @@ The loop is the same shape with two differences:
   ```
   npm run qa:prod && npm run qa:prod:visual
   ```
-  `qa:prod` is HTTP-only — no browser, no auth needed. It hits a
-  curated set of routes and asserts the expected unauth response,
-  which is enough to catch the failure modes that have actually
-  bitten this app (build crash, lazy-migration broken, Prisma schema
-  drift). `qa:prod:visual` adds authenticated DOM assertions via
-  headless Chromium when `WATCHER_SESSION_COOKIE` is set; otherwise
-  it self-skips with exit 0, so the chain stays green either way.
+  `qa:prod` runs in two layers: (a) HTTP-only — hits a curated set
+  of routes and asserts the expected unauth response, catching build
+  crash / lazy-migration broken / Prisma schema drift; (b) calls
+  `/api/qa/probe`, a public read-only endpoint that runs DB-level
+  invariant checks server-side and returns aggregate status. The
+  probe surfaces the failure modes the HTTP layer misses — empty
+  data, missing avatars, stale cron, low poll-success-rate, active
+  Spotify cooldown, watchedUsers stuck unsynced. No auth needed for
+  either layer.
 
-  First run only on a fresh sandbox: `npm run qa:prod:install` to
-  fetch the chromium binary (~92 MB).
+  `qa:prod:visual` adds authenticated DOM assertions via headless
+  Chromium when `WATCHER_SESSION_COOKIE` is set; otherwise it self-
+  skips with exit 0, so the chain stays green either way. First run
+  only on a fresh sandbox: `npm run qa:prod:install` to fetch the
+  chromium binary (~92 MB).
 
   To enable visual QA, paste the `spw_session` cookie from a
   logged-in browser into `WATCHER_SESSION_COOKIE` (env var, repo
@@ -219,10 +224,17 @@ The loop is the same shape with two differences:
   monthly. See `scripts/qa-prod-visual.ts` header for the exact
   extraction steps.
 
+  Adding a new probe check: edit `src/app/api/qa/probe/route.ts`,
+  push a `Check` with `name`, `status`, `detail`. The contract is
+  read-only and aggregates-only — never expose per-row data or PII.
+  The script side reads `body.checks` generically, so new checks
+  appear automatically.
+
 If a feature falls outside what either script covers (push
-notifications, OAuth flows, cron behavior), be honest in the PR
-body about what's unverified rather than overclaiming "verified on
-prod". The user can confirm out of band.
+notifications, OAuth flows, anything cron-internal beyond aggregate
+freshness), be honest in the PR body about what's unverified rather
+than overclaiming "verified on prod". The user can confirm out of
+band.
 
 ## Infrastructure access (Vercel, Supabase, GitHub)
 
