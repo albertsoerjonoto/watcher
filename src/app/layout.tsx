@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import { LayoutDashboard, Newspaper, Settings as SettingsIcon } from "lucide-react";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { PerfTracker } from "@/components/PerfTracker";
 
 export const metadata: Metadata = {
   title: "Watcher",
@@ -59,6 +60,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </nav>
         </header>
         <main className="mx-auto max-w-3xl p-4">{children}</main>
+        <PerfTracker />
       </body>
     </html>
   );
