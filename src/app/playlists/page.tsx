@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { getCurrentUser } from "@/lib/session";
+import { readSessionUserId } from "@/lib/session";
 import { formatDateTimeJakarta } from "@/lib/datetime";
 import { WatchedUserAvatar } from "@/components/WatchedUserAvatar";
 
@@ -16,8 +16,9 @@ export default async function PlaylistsIndexPage({
 }: {
   searchParams: { order?: string };
 }) {
-  const user = await getCurrentUser();
-  if (!user) {
+  // Sync HMAC — no DB query, no Prisma migration trigger on cold start.
+  const userId = readSessionUserId();
+  if (!userId) {
     return (
       <p className="text-neutral-500 dark:text-neutral-400">Sign in required.</p>
     );
@@ -30,14 +31,15 @@ export default async function PlaylistsIndexPage({
 
   // Fetch watched users + playlists+tracks in parallel. Watched users
   // come from their own table so groups with playlists yet to populate
-  // (or all-orphan accounts) still get a header.
+  // (or all-orphan accounts) still get a header. The user lookup runs
+  // alongside instead of as a serial preamble.
   const [watchedUsers, playlists] = await Promise.all([
     prisma.watchedUser.findMany({
-      where: { userId: user.id },
+      where: { userId },
       orderBy: { createdAt: "asc" },
     }),
     prisma.playlist.findMany({
-      where: { userId: user.id, status: "active" },
+      where: { userId, status: "active" },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
       include: {
         tracks: { orderBy: { addedAt: order } },
