@@ -682,16 +682,20 @@ function SectionList({
   onDelete,
   onSection,
 }: SectionListProps) {
-  // Collapse rules:
-  // - In weekly mode (default): every section is collapsible, and a
-  //   section auto-collapses when nothing in it has adds-this-week.
-  // - In manual mode: only Other is collapsible (legacy behavior),
-  //   and it default-collapses when populated.
-  // - Empty sections always open (so the placeholder is visible).
+  // Two-level filtering in weekly mode:
+  // 1. Section-level collapse: a section with no adds-this-week
+  //    auto-collapses entirely (header still clickable to expand).
+  // 2. Row-level filter: an open section in weekly mode shows only
+  //    playlists with adds-this-week; the inactive ones hide behind
+  //    a "+ Show N inactive" footer button.
+  // Manual mode bypasses both filters — everything visible, sorted
+  // by the user's manual order. Other in manual mode keeps its
+  // legacy default-collapsed behavior because it can hold ~50 rows.
   const collapsible = sortMode === "weekly" || section === "other";
   const weeklyActiveCount = rows.filter(
     (p) => (weekByPlaylist[p.id] ?? 0) > 0,
   ).length;
+  const inactiveCount = rows.length - weeklyActiveCount;
 
   const defaultOpen =
     rows.length === 0
@@ -701,14 +705,31 @@ function SectionList({
         : hasWeeklyActive;
 
   const [open, setOpen] = useState(defaultOpen);
+  const [showInactive, setShowInactive] = useState(false);
 
-  // Re-apply the default whenever the sort context changes (mode flip
-  // or weekly activity changes due to a poll). This is intentional:
-  // toggling sort modes should reset section visibility cleanly,
-  // while a click within a mode still persists until a real change.
+  // Re-apply the defaults whenever the sort context changes (mode flip
+  // or weekly activity changes due to a poll). Toggling sort modes
+  // resets both section visibility and the inactive-playlist filter
+  // cleanly; a click within a mode persists until a real change.
   useEffect(() => {
     setOpen(defaultOpen);
+    setShowInactive(false);
   }, [defaultOpen]);
+
+  // In weekly mode, hide playlists with no adds-this-week unless the
+  // user clicked "Show N inactive". When the section auto-collapsed
+  // because hasWeeklyActive is false, expanding it reveals everything
+  // (there's nothing to hide behind the inner filter).
+  const showAllRows =
+    sortMode === "manual" || !hasWeeklyActive || showInactive;
+  const visibleRows = showAllRows
+    ? rows
+    : rows.filter((p) => (weekByPlaylist[p.id] ?? 0) > 0);
+  const showInactiveButton =
+    open &&
+    sortMode === "weekly" &&
+    hasWeeklyActive &&
+    inactiveCount > 0;
 
   if (rows.length === 0) {
     // Empty Other never renders. Empty New is filtered out by
@@ -752,14 +773,14 @@ function SectionList({
         open={open}
         onToggle={() => setOpen((v) => !v)}
       />
-      {open && (
+      {open && visibleRows.length > 0 && (
         <ul className="divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-          {rows.map((p, idx) => (
+          {visibleRows.map((p, idx) => (
             <PlaylistRowItem
               key={p.id}
               p={p}
               isFirst={idx === 0}
-              isLast={idx === rows.length - 1}
+              isLast={idx === visibleRows.length - 1}
               recent={recentByPlaylist[p.id] ?? []}
               weekCount={weekByPlaylist[p.id] ?? 0}
               error={errorByPlaylist[p.id]}
@@ -771,6 +792,17 @@ function SectionList({
             />
           ))}
         </ul>
+      )}
+      {showInactiveButton && (
+        <button
+          type="button"
+          onClick={() => setShowInactive((v) => !v)}
+          className="w-full rounded border border-dashed border-neutral-200 px-3 py-1.5 text-xs text-neutral-500 hover:bg-neutral-100 dark:border-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-900"
+        >
+          {showInactive
+            ? `Hide ${inactiveCount} inactive`
+            : `+ Show ${inactiveCount} inactive`}
+        </button>
       )}
     </div>
   );
