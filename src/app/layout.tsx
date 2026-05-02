@@ -43,7 +43,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Newspaper className="h-5 w-5" />
             </Link>
             <div className="ml-auto flex items-center gap-4">
-              <div className="flex items-center gap-3 rounded border border-neutral-200 px-2 py-1 dark:border-neutral-800">
+              <div className="flex items-center gap-3 rounded-lg border border-neutral-200 px-2 py-1 dark:border-neutral-800">
                 <AutoRefresh />
                 <div id="dashboard-toolbar-slot" className="contents" />
               </div>
