@@ -49,3 +49,26 @@ export function dayKeyJakarta(d: Date | string): string {
   const date = d instanceof Date ? d : new Date(d);
   return dayKeyFmt.format(date);
 }
+
+// "today" / "yesterday" / "N days ago" relative to now in Jakarta calendar
+// days. Day boundaries follow Jakarta TZ so "today" matches what the user
+// sees on the wall clock.
+export function formatRelativeJakarta(
+  d: Date | string | null | undefined,
+): string {
+  if (!d) return "—";
+  const date = d instanceof Date ? d : new Date(d);
+  if (isNaN(date.getTime())) return "—";
+  const todayKey = dayKeyJakarta(new Date());
+  const thenKey = dayKeyJakarta(date);
+  if (todayKey === thenKey) return "today";
+  const [ty, tm, td] = todayKey.split("-").map(Number);
+  const [py, pm, pd] = thenKey.split("-").map(Number);
+  const diffDays = Math.round(
+    (Date.UTC(ty, tm - 1, td) - Date.UTC(py, pm - 1, pd)) / 86_400_000,
+  );
+  if (diffDays === 1) return "yesterday";
+  if (diffDays > 1) return `${diffDays} days ago`;
+  if (diffDays === -1) return "tomorrow";
+  return `in ${-diffDays} days`;
+}
