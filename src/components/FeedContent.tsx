@@ -2,7 +2,11 @@
 
 import Link from "next/link";
 import useSWR from "swr";
-import { dayKeyJakarta, formatDateJakarta } from "@/lib/datetime";
+import {
+  dayKeyJakarta,
+  formatDateJakarta,
+  formatTimeJakarta,
+} from "@/lib/datetime";
 import { fetcher } from "@/lib/swr-fetcher";
 import { FEED_KEY } from "./feed-keys";
 import { TrackLinks } from "./TrackLinks";
@@ -131,6 +135,9 @@ export function FeedContent({ filter, fallbackData }: Props) {
                           {artists.join(", ")}
                         </div>
                       </div>
+                      <time className="shrink-0 text-xs tabular-nums text-neutral-500 dark:text-neutral-400">
+                        {formatTimeJakarta(e.addedAt)}
+                      </time>
                       <TrackLinks
                         track={{
                           title: e.title,
