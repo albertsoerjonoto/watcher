@@ -245,11 +245,37 @@ export async function syncWatchedUser(
     });
   }
 
-  // Stamp lastSyncedAt only after the inserts succeed. If something
-  // throws above, we want a re-run to also be treated as first-sync.
+  // Compute the discovery health for this sync. The cron auto-
+  // rediscovery loop in /api/cron/poll/route.ts targets users whose
+  // discoveryStatus is "blocked" or "partial" — every 6h, we re-fire
+  // the full chain for those rows.
+  //
+  //   "ok"      — Tier 1/2/3/4 returned ≥1 playlist (canonical paths)
+  //   "partial" — only Tier 5 (search) hit, OR any tier reported
+  //               truncated. Search coverage is incomplete by nature
+  //               so we keep retrying.
+  //   "blocked" — every tier returned zero. Genuine privacy lock; we
+  //               still retry every 6h in case settings change or
+  //               Spotify infra recovers.
+  const discoveryStatusComputed: "ok" | "partial" | "blocked" = privacyLocked
+    ? "blocked"
+    : fetched && fetched.playlists.length === 0
+      ? "blocked"
+      : fetched && (fetched.discoveryVia === "search" || fetched.truncated)
+        ? "partial"
+        : "ok";
+
+  // Stamp lastSyncedAt + discovery telemetry only after the inserts
+  // succeed. If something throws above, we want a re-run to also be
+  // treated as first-sync.
   await prisma.watchedUser.update({
     where: { id: watchedUser.id },
-    data: { lastSyncedAt: new Date() },
+    data: {
+      lastSyncedAt: new Date(),
+      lastDiscoveryAttemptAt: new Date(),
+      discoveryStatus: discoveryStatusComputed,
+      discoveryVia: fetched?.discoveryVia ?? "none",
+    },
   });
 
   // Fire push notifications for newly-discovered playlists, but only

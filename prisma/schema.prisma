@@ -35,15 +35,25 @@ model User {
 // Today's deployment has one WatchedUser (179366) backfilled from the
 // existing Playlist.ownerSpotifyId data.
 model WatchedUser {
-  id            String     @id @default(cuid())
-  userId        String
-  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  spotifyId     String     // the watched Spotify user id, e.g. "179366"
-  displayName   String?
-  imageUrl      String?
-  createdAt     DateTime   @default(now())
-  lastSyncedAt  DateTime?  // last fetchUserPublicPlaylists call
-  playlists     Playlist[]
+  id                      String     @id @default(cuid())
+  userId                  String
+  user                    User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  spotifyId               String     // the watched Spotify user id, e.g. "179366"
+  displayName             String?
+  imageUrl                String?
+  createdAt               DateTime   @default(now())
+  lastSyncedAt            DateTime?  // last fetchUserPublicPlaylists call
+  // Discovery health. `discoveryStatus` drives whether the cron
+  // auto-rediscovery loop targets this user; `discoveryVia` echoes
+  // the tier that produced the most recent successful enumeration so
+  // the dashboard can render "via search" / "auto-retry every 6h".
+  // `lastDiscoveryAttemptAt` gates the cron retry interval (default 6h).
+  // Values for discoveryStatus: "ok" | "partial" | "blocked".
+  // Values for discoveryVia: matches DiscoveryVia in src/lib/spotify.ts.
+  discoveryStatus         String     @default("ok")
+  discoveryVia            String?
+  lastDiscoveryAttemptAt  DateTime?
+  playlists               Playlist[]
 
   @@unique([userId, spotifyId])
   @@index([userId])
