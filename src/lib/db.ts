@@ -16,17 +16,32 @@ if (process.env.NODE_ENV !== "production") globalForPrisma.prismaBase = prismaBa
 // Lazy, idempotent runtime migrations. Vercel doesn't expose
 // DATABASE_URL at build time (it's runtime-only by default), so
 // `prisma db push` can't run there. Instead we apply additive
-// migrations the first time the server touches the User table. Each
-// ALTER uses IF NOT EXISTS so concurrent cold starts and re-invocations
-// are safe — at most one Lambda actually adds the column, the rest
-// see it already there. The promise is cached on globalThis so we
-// only pay this cost once per process.
+// migrations the first time the server touches an affected table.
+// Each statement uses IF NOT EXISTS / WHERE-guards so concurrent cold
+// starts and re-invocations are safe. The promise is cached on
+// globalThis so we only pay this cost once per process.
 async function applyMigrations(): Promise<void> {
+  // Schema additions (idempotent via IF NOT EXISTS).
   await prismaBase.$executeRawUnsafe(`
     ALTER TABLE "User"
       ADD COLUMN IF NOT EXISTS "notifyMain"  BOOLEAN NOT NULL DEFAULT true,
       ADD COLUMN IF NOT EXISTS "notifyNew"   BOOLEAN NOT NULL DEFAULT true,
       ADD COLUMN IF NOT EXISTS "notifyOther" BOOLEAN NOT NULL DEFAULT true;
+  `);
+
+  // One-shot data backfills. Each is gated on the column being null
+  // (or another idempotency check) so a successful subsequent
+  // /api/watched-users/{id}/sync can overwrite with a fresher value
+  // without us clobbering it on the next cold start.
+  //
+  // 179366: Spotify's Web API /users/{id} returns no `images` array
+  // for this profile even though the web UI shows an avatar. Until
+  // we wire a fallback fetch (spclient or embed) for profile images,
+  // backfill the known CDN URL by hand.
+  await prismaBase.$executeRawUnsafe(`
+    UPDATE "WatchedUser"
+    SET "imageUrl" = 'https://i.scdn.co/image/ab6775700000ee850baa2d165db57c172e1472ee'
+    WHERE "spotifyId" = '179366' AND "imageUrl" IS NULL;
   `);
 }
 
@@ -44,13 +59,20 @@ export function ensureMigrations(): Promise<void> {
   return globalForPrisma.watcherMigrations;
 }
 
-// Auto-gate every User operation behind the migration. This way
-// callers don't have to remember to call ensureMigrations() before
-// each prisma.user.* — the extension does it for them. Other models
-// don't need the gate (the schema change only touched User).
+// Auto-gate every User and WatchedUser operation behind the migration
+// promise. This way callers don't have to remember to call
+// ensureMigrations() before each prisma.user.* / prisma.watchedUser.*
+// — the extension does it for them. Other models don't need the gate
+// (so far we've only touched these two).
 export const prisma = prismaBase.$extends({
   query: {
     user: {
+      async $allOperations({ args, query }) {
+        await ensureMigrations();
+        return query(args);
+      },
+    },
+    watchedUser: {
       async $allOperations({ args, query }) {
         await ensureMigrations();
         return query(args);
