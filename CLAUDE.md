@@ -58,6 +58,31 @@ are added. Filters out self-additions. PWA-first, deployed on Vercel.
 
 ---
 
+# Operating principles
+
+See `BOOTSTRAP.md` for the portable copy-paste prompt. Short version
+that applies inside this repo:
+
+1. **Verify, don't trust.** Tests + build + preview deploy + prod
+   deploy + smoke the live URL + assert the specific user-visible
+   behavior. Each layer catches what the previous misses.
+2. **Tight loops.** Define success as a runnable check before
+   implementing. Re-run after every meaningful edit.
+3. **Surgical edits.** Minimum viable diff. Don't sweep up
+   orthogonal cleanup into a feature PR.
+4. **Boil the lake when boilable.** If completeness is one extra
+   minute, do it. The 20% you skip is what bites the next loop.
+5. **Honest reporting.** "Smoke-tested only — visual change needs
+   eyes" beats "verified on prod" when you only ran a curl.
+6. **Don't stop until user-visible behavior is verified.** "I wrote
+   the code" / "tests pass" / "PR merged" are not exit conditions.
+
+The full agent loop is below. The exit condition is always: the
+feature works on https://playlistwatcher.vercel.app. Not "I think
+it works" — saw it.
+
+---
+
 # Agent loop — autonomous develop → deploy → QA → iterate
 
 This repo expects Claude agents to ship features end-to-end without
