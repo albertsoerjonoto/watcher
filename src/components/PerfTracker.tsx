@@ -5,16 +5,37 @@ import { usePathname } from "next/navigation";
 
 // SPA navigation timing logger. On every pathname change, measures the
 // time from the click that triggered the nav until the next paint and
-// logs e.g. `[NAV] /feed: 87ms (cache: hit)` to the console.
+// records `{ path, ms, cacheHit, apiCalls, at }` to both:
+//   - console.log via `[NAV] /feed: 87ms (cache: hit)`
+//   - window.__watcherNav.entries (last 50)
+//
+// The window export exists because Chrome MCP's read_console_messages
+// only reliably surfaces exceptions in headless QA — reading from
+// window via javascript_tool is the QA-friendly path. DevTools users
+// see the console line.
 //
 // "cache: hit" means no /api/* fetch fired during the transition;
 // "api: /api/feed" means the page hit the network. This distinction
-// lets QA verify (via Chrome MCP read_console_messages) whether the
-// SWR + localStorage caching is short-circuiting the network on warm
-// navigations.
+// lets QA verify whether the SWR + localStorage caching is
+// short-circuiting the network on warm navigations.
 //
 // First mount (hard load) is skipped — that's covered by Performance
 // Navigation Timing, not by us.
+
+interface NavEntry {
+  path: string;
+  ms: number;
+  cacheHit: boolean;
+  apiCalls: string[];
+  at: number;
+}
+
+declare global {
+  interface Window {
+    __watcherNav?: { entries: NavEntry[] };
+  }
+}
+
 export function PerfTracker() {
   const pathname = usePathname();
   const startRef = useRef<number | null>(null);
@@ -63,10 +84,23 @@ export function PerfTracker() {
             }
           })
           .filter((p) => p.startsWith("/api/"));
-        const note =
-          apiCalls.length === 0
-            ? "(cache: hit)"
-            : `(api: ${apiCalls.join(",")})`;
+        const cacheHit = apiCalls.length === 0;
+        const note = cacheHit
+          ? "(cache: hit)"
+          : `(api: ${apiCalls.join(",")})`;
+        const entry: NavEntry = {
+          path,
+          ms,
+          cacheHit,
+          apiCalls,
+          at: Date.now(),
+        };
+        if (!window.__watcherNav) window.__watcherNav = { entries: [] };
+        window.__watcherNav.entries.push(entry);
+        // Cap so a long-lived tab doesn't grow unbounded.
+        if (window.__watcherNav.entries.length > 50) {
+          window.__watcherNav.entries.shift();
+        }
         // eslint-disable-next-line no-console
         console.log(`[NAV] ${path}: ${ms}ms ${note}`);
         startRef.current = null;
