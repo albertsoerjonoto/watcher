@@ -115,64 +115,66 @@ export default async function FeedPage({
         </p>
       )}
       {Array.from(groups.entries()).map(([day, playlists]) => (
-        <div key={day} className="space-y-4">
-          <h2 className="text-xs uppercase tracking-wide text-neutral-500">
+        <div key={day}>
+          <h2 className="mb-3 text-xs uppercase tracking-wide text-neutral-500">
             {formatDateJakarta(day)}
           </h2>
-          {Array.from(playlists.entries()).map(([playlistId, items]) => (
-            <div key={playlistId} className="space-y-2">
-              <Link
-                href={`/playlists/${playlistId}`}
-                className="flex items-center gap-2 text-base font-semibold"
-              >
-                {items[0].playlistImageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={items[0].playlistImageUrl}
-                    alt=""
-                    className="h-7 w-7 shrink-0 rounded object-cover"
-                  />
-                ) : (
-                  <div className="h-7 w-7 shrink-0 rounded bg-neutral-200 dark:bg-neutral-800" />
-                )}
-                <span className="truncate hover:underline">
-                  {items[0].playlistName}
-                </span>
-              </Link>
-              <ul className="divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-                {items.map((e) => {
-                  const artists = JSON.parse(e.artists) as string[];
-                  return (
-                    <li key={e.id} className="flex items-center gap-3 p-3 text-sm">
-                      {e.albumImageUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={e.albumImageUrl}
-                          alt=""
-                          className="h-9 w-9 shrink-0 rounded object-cover"
-                        />
-                      ) : (
-                        <div className="h-9 w-9 shrink-0 rounded bg-neutral-200 dark:bg-neutral-800" />
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <div className="truncate font-medium">{e.title}</div>
-                        <div className="truncate text-xs text-neutral-500 dark:text-neutral-400">
-                          {artists.join(", ")}
+          <div className="space-y-5 border-l border-neutral-200 pl-3 dark:border-neutral-800">
+            {Array.from(playlists.entries()).map(([playlistId, items]) => (
+              <div key={playlistId}>
+                <Link
+                  href={`/playlists/${playlistId}`}
+                  className="flex items-center gap-2 text-base font-semibold"
+                >
+                  {items[0].playlistImageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={items[0].playlistImageUrl}
+                      alt=""
+                      className="h-7 w-7 shrink-0 rounded object-cover"
+                    />
+                  ) : (
+                    <div className="h-7 w-7 shrink-0 rounded bg-neutral-200 dark:bg-neutral-800" />
+                  )}
+                  <span className="truncate hover:underline">
+                    {items[0].playlistName}
+                  </span>
+                </Link>
+                <ul className="mt-2 space-y-2 border-l border-neutral-200 pl-3 dark:border-neutral-800">
+                  {items.map((e) => {
+                    const artists = JSON.parse(e.artists) as string[];
+                    return (
+                      <li key={e.id} className="flex items-center gap-3 text-sm">
+                        {e.albumImageUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={e.albumImageUrl}
+                            alt=""
+                            className="h-9 w-9 shrink-0 rounded object-cover"
+                          />
+                        ) : (
+                          <div className="h-9 w-9 shrink-0 rounded bg-neutral-200 dark:bg-neutral-800" />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="truncate font-medium">{e.title}</div>
+                          <div className="truncate text-xs text-neutral-500 dark:text-neutral-400">
+                            {artists.join(", ")}
+                          </div>
                         </div>
-                      </div>
-                      <TrackLinks
-                        track={{
-                          title: e.title,
-                          artists: e.artists,
-                          spotifyTrackId: e.spotifyTrackId,
-                        }}
-                      />
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          ))}
+                        <TrackLinks
+                          track={{
+                            title: e.title,
+                            artists: e.artists,
+                            spotifyTrackId: e.spotifyTrackId,
+                          }}
+                        />
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </div>
         </div>
       ))}
     </section>
