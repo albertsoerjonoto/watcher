@@ -20,9 +20,17 @@ import * as path from "node:path";
 
 const SRC_ROOT = path.resolve(__dirname, "..");
 
+// Every endpoint that can issue MULTIPLE Spotify calls per request has
+// to call the throttle. The list grows when we add new batch routes.
+// A new entry here is the only place a refactor needs to remember to
+// add the gate; CI fails on the route file if it forgets.
 const REQUIRED_THROTTLE_CALLERS = [
   "app/api/refresh/route.ts",
   "app/api/cron/poll/route.ts",
+  "app/api/playlists/[id]/retry/route.ts",
+  "app/api/playlists/poll-pending/route.ts",
+  "app/api/watched-users/route.ts",
+  "app/api/watched-users/[id]/sync/route.ts",
 ];
 
 describe("refresh-batch throttle guardrail", () => {

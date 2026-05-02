@@ -18,7 +18,11 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
 import { parseUserId } from "@/lib/spotify";
-import { getCooldownSeconds } from "@/lib/rate-limit";
+import {
+  getCooldownSeconds,
+  getRefreshBatchThrottleSeconds,
+  recordRefreshBatchStarted,
+} from "@/lib/rate-limit";
 import { syncWatchedUser } from "@/lib/watched-user-sync";
 import { SpotifyError } from "@/lib/spotify";
 
@@ -57,6 +61,19 @@ export async function POST(request: Request) {
     });
   }
 
+  // Adding a watched user fires ~10-15 Spotify calls (search + profile
+  // + paginated playlists + per-playlist seed). Cross-instance batch
+  // throttle so 5 concurrent agents adding 5 different users serialize
+  // through the same gate as /api/refresh and /api/cron/poll.
+  const throttleSeconds = await getRefreshBatchThrottleSeconds();
+  if (throttleSeconds > 0) {
+    return NextResponse.json({
+      ok: true,
+      skipped: "throttled",
+      retryAfterSeconds: throttleSeconds,
+    });
+  }
+
   const body = AddSchema.safeParse(await request.json());
   if (!body.success) {
     return NextResponse.json({ error: "invalid" }, { status: 400 });
@@ -83,6 +100,9 @@ export async function POST(request: Request) {
     );
   }
 
+  // Stamp the batch BEFORE the first Spotify call so a concurrent
+  // caller bails.
+  await recordRefreshBatchStarted();
   try {
     const result = await syncWatchedUser(user, spotifyId);
     return NextResponse.json({

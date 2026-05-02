@@ -82,13 +82,14 @@ const BUDGET_WINDOW_MS = 30_000;
 // the aggregate exceeded Spotify's actual ceiling.
 const BUDGET_MAX_REQUESTS = 10;
 
-// Global minimum gap between any two Spotify requests. 500ms means a
-// hard ceiling of 2 calls/sec globally, regardless of how many
+// Global minimum gap between any two Spotify requests. 1000ms means
+// a hard ceiling of 1 call/sec globally, regardless of how many
 // serverless instances Vercel spins up. A poll cycle with 6 playlists
-// at ~2 calls each = 12 calls = 6 seconds, which is still WELL within
-// any reasonable rate budget. We'd rather make cron slightly slower
-// than risk another multi-hour block.
-const MIN_INTERVAL_MS = 500;
+// at ~2 calls each = 12 calls = 12 seconds, which is still WELL
+// within any reasonable rate budget. We'd rather make cron noticeably
+// slower than risk another multi-hour block. Was 500ms; tightened to
+// 1000ms for the May 2026 "5 parallel agents" hardening pass.
+const MIN_INTERVAL_MS = 1000;
 
 // Minimum gap between consecutive refresh BATCHES, regardless of
 // caller. A "batch" is an /api/refresh or /api/cron/poll invocation

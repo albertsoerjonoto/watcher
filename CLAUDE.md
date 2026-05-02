@@ -354,9 +354,30 @@ find yourself wanting to bypass one, stop and read this file again.
    share Spotify's bucket; racing both into the same 30-second window
    is the failure mode we are explicitly trying to avoid. The cron
    tick honors the same `getRefreshBatchThrottleSeconds()` gate as
-   `/api/refresh` and a CI guardrail (`refresh-batch-throttle.test.ts`)
-   greps both routes for both helper names so a careless refactor
-   that drops the gate fails CI.
+   `/api/refresh`.
+
+9. **EVERY endpoint that issues a multi-call Spotify batch must call
+   the batch throttle.** Currently:
+   - `/api/refresh` (Dashboard auto-refresh)
+   - `/api/cron/poll` (daily cron)
+   - `/api/playlists/[id]/retry` (per-playlist retry button)
+   - `/api/playlists/poll-pending` (newly-added playlist seed loop)
+   - `/api/watched-users` POST (add a watched user)
+   - `/api/watched-users/[id]/sync` (re-sync a watched user)
+
+   A CI guardrail (`src/lib/refresh-batch-throttle.test.ts`) greps
+   each route file for both `getRefreshBatchThrottleSeconds(` and
+   `recordRefreshBatchStarted(` and fails if either is missing. Adding
+   a new batch endpoint? Add it to that array.
+
+10. **The 5-agent invariant**: with N concurrent callers (5 agents,
+    5 tabs, 5 lambdas — same thing) hitting any combination of the
+    batch endpoints above, the floor on Spotify call rate is bounded
+    by `BUDGET_MAX_REQUESTS / REFRESH_BATCH_MIN_INTERVAL_MS`, currently
+    10 calls / 60 seconds = 5 calls / 30 seconds globally. Spotify's
+    undocumented dev-mode rolling-30s ceiling is somewhere above that;
+    the four layers compounded leave plenty of headroom. If a future
+    refactor changes any constant, do the math again before merging.
 
 ## Things NOT to do
 

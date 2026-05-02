@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
 import { pollPlaylist } from "@/lib/poll";
-import { getCooldownSeconds } from "@/lib/rate-limit";
+import {
+  getCooldownSeconds,
+  getRefreshBatchThrottleSeconds,
+  recordRefreshBatchStarted,
+} from "@/lib/rate-limit";
 
 // POST /api/playlists/:id/retry
 //
@@ -26,6 +30,19 @@ export async function POST(
     );
   }
 
+  // Cross-instance batch throttle. A user spam-clicking Retry across
+  // multiple playlists, or 5 agents racing tests, would otherwise
+  // pile Spotify calls into the same 30-second window. The first
+  // retry stamps lastRefreshBatchAt; subsequent retries within the
+  // throttle window are short-circuited to a 429 with retry-after.
+  const throttleSeconds = await getRefreshBatchThrottleSeconds();
+  if (throttleSeconds > 0) {
+    return NextResponse.json(
+      { error: "throttled", retryAfterSeconds: throttleSeconds },
+      { status: 429 },
+    );
+  }
+
   const playlist = await prisma.playlist.findFirst({
     where: { id: params.id, userId: user.id },
   });
@@ -41,6 +58,10 @@ export async function POST(
     data: { status: "active", snapshotId: null },
   });
 
+  // Stamp the batch BEFORE the first Spotify call so a concurrent
+  // caller (different lambda, different tab, different agent) sees
+  // it and bails.
+  await recordRefreshBatchStarted();
   try {
     const result = await pollPlaylist(user, reset);
     return NextResponse.json({ result });
