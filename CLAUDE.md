@@ -313,10 +313,11 @@ find yourself wanting to bypass one, stop and read this file again.
    "because it didn't know" — the guard reads the DB-backed value.
 
 3. **We maintain our own rolling-30s budget** in `rate-limit.ts`
-   (`BUDGET_MAX_REQUESTS = 20`). This rejects proactively, before
-   Spotify gets a chance to see a request we shouldn't have made. 20
+   (`BUDGET_MAX_REQUESTS = 10`). This rejects proactively, before
+   Spotify gets a chance to see a request we shouldn't have made. 10
    is well under whatever the real dev-mode ceiling is — do not raise
-   it without a very good reason.
+   it without a very good reason. (Was 20 before May 2026's
+   aggregate-vs-individual lockout, see "history" below.)
 
 4. **On 429, we call `recordRateLimited(retryAfter)` and throw
    immediately.** No retry. No fallback endpoint escalation. The
@@ -327,20 +328,35 @@ find yourself wanting to bypass one, stop and read this file again.
    active they return `null` / empty tracks — they do NOT try to route
    around the block.
 
-6. **`/api/refresh` is double-gated**:
-   - Checks `getCooldownSeconds()` first (DB read, zero Spotify calls).
-     If cooling down, returns `{ skipped: "cooldown" }` immediately.
-   - Then skips any playlist whose `lastCheckedAt` is newer than
-     `STALE_THRESHOLD_MS` (10 minutes). Rapid tab-switching can't
-     re-poll fresh data.
+6. **`/api/refresh` is triple-gated**:
+   - **Gate 1 — cooldown:** `getCooldownSeconds()` (DB read, zero
+     Spotify calls). If cooling down, returns
+     `{ skipped: "cooldown" }` immediately.
+   - **Gate 2 — refresh-batch throttle:** `getRefreshBatchThrottleSeconds()`
+     (DB read). If any caller (any tab, any cron tick, any lambda)
+     started a Spotify batch within the last 60s, return
+     `{ skipped: "throttled" }`. This is the SERVER-enforced
+     can't-bypass guard — fresh JS contexts can't sidestep it.
+   - **Gate 3 — staleness:** skips any playlist whose `lastCheckedAt`
+     is newer than `STALE_THRESHOLD_MS` (10 minutes). Rapid tab-switching
+     can't re-poll fresh data.
+   - On reaching the Spotify-bound section, calls
+     `recordRefreshBatchStarted()` BEFORE the first `spotifyFetch` so
+     a concurrent caller sees the new value and bails too.
 
 7. **The client AutoRefresh widget calls `/api/sync-status` first**,
    which is DB-only. It only fires `/api/refresh` if `cooldownSeconds
-   === 0 && staleCount > 0`. Mounting the dashboard never triggers a
-   Spotify call if nothing needs refreshing.
+   === 0 && refreshThrottleSeconds === 0 && staleCount > 0`. Mounting
+   the dashboard never triggers a Spotify call if nothing needs
+   refreshing — and even if it does, gate 2 kicks in.
 
-8. **`/api/cron/poll` checks the cooldown before enumerating users**.
-   A cron tick during a cooldown window is a no-op.
+8. **`/api/cron/poll` is also batch-throttled**. Cron and the user
+   share Spotify's bucket; racing both into the same 30-second window
+   is the failure mode we are explicitly trying to avoid. The cron
+   tick honors the same `getRefreshBatchThrottleSeconds()` gate as
+   `/api/refresh` and a CI guardrail (`refresh-batch-throttle.test.ts`)
+   greps both routes for both helper names so a careless refactor
+   that drops the gate fails CI.
 
 ## Things NOT to do
 
@@ -355,7 +371,17 @@ find yourself wanting to bypass one, stop and read this file again.
   have a bug — some loop is fanning out.
 - Don't call `/api/refresh` from a React effect that can fire more than
   once per 10 seconds. AutoRefresh has a 10s debounce; anything else
-  should too.
+  should too. (Note: even if you do, the server-side batch throttle
+  will turn it into `{ skipped: "throttled" }`, but there's no reason
+  to trip it.)
+- **Don't ever call `/api/refresh` from a QA / dev test loop without
+  understanding the gates.** Clearing localStorage / SW / cache between
+  hard reloads of Dashboard does NOT reset the server-side
+  refresh-batch throttle, and that's intentional — it's the gate that
+  prevents the May 2026 28-minute lockout from ever happening again.
+  If your test wants to verify "refresh works", verify the response
+  shape (`ok: true, results: ...` OR `skipped: ...`), not that
+  Spotify was actually hit.
 
 ## If we get rate-limited anyway
 
