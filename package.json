@@ -16,7 +16,9 @@
     "poll": "tsx scripts/poll-once.ts",
     "qa:prod": "tsx scripts/qa-prod.ts",
     "qa:prod:visual": "tsx scripts/qa-prod-visual.ts",
-    "qa:prod:install": "playwright install chromium"
+    "qa:prod:install": "playwright install chromium",
+    "qa:vercel": "tsx scripts/qa-vercel.ts",
+    "qa:db": "tsx scripts/qa-db.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
