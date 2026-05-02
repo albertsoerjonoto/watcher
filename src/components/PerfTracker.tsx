@@ -83,6 +83,15 @@ export function PerfTracker() {
   useEffect(() => {
     const start = startTime;
     if (start == null) return; // No click captured — hard load or back/forward.
+    // Claim the timer atomically so any other PerfTracker instance whose
+    // pathname effect also fires for this nav sees null and bails. Without
+    // this, App Router's transient remounts produced 3+ duplicate entries
+    // per nav (and the slow ones inherited stale start values from prior
+    // unrouted clicks).
+    startTime = null;
+    // Stale-click guard: if no nav happened for 5s after the click, the
+    // measurement is bogus (probably a synthetic click that didn't route).
+    if (performance.now() - start > 5_000) return;
     const beforeCount = startResourceCount;
     const path = pathname;
 
@@ -121,7 +130,6 @@ export function PerfTracker() {
         }
         // eslint-disable-next-line no-console
         console.log(`[NAV] ${path}: ${ms}ms ${note}`);
-        startTime = null;
 
         // Async: poll resource entries until SETTLED_QUIET_MS passes
         // with no new fetches. Updates entry.settledMs in place.
