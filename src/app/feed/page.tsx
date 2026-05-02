@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
 import Link from "next/link";
 import { dayKeyJakarta, formatDateJakarta } from "@/lib/datetime";
+import { TrackLinks } from "@/components/TrackLinks";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +16,7 @@ interface FeedRow {
   playlistId: string;
   playlistName: string;
   section: string;
+  spotifyTrackId: string;
 }
 
 type Filter = "all" | "main" | "new" | "other";
@@ -49,7 +51,7 @@ export default async function FeedPage({
   const sectionClause =
     filter === "all" ? Prisma.empty : Prisma.sql`AND p."section" = ${filter}`;
   const events = await prisma.$queryRaw<FeedRow[]>(Prisma.sql`
-    SELECT t.id, t.title, t.artists, t."albumImageUrl", t."addedAt",
+    SELECT t.id, t.title, t.artists, t."albumImageUrl", t."addedAt", t."spotifyTrackId",
            p.id AS "playlistId", p.name AS "playlistName", p."section" AS "section"
     FROM "Track" t
     JOIN "Playlist" p ON t."playlistId" = p.id
@@ -130,6 +132,13 @@ export default async function FeedPage({
                       </Link>
                     </div>
                   </div>
+                  <TrackLinks
+                    track={{
+                      title: e.title,
+                      artists: e.artists,
+                      spotifyTrackId: e.spotifyTrackId,
+                    }}
+                  />
                 </li>
               );
             })}
