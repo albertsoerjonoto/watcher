@@ -28,6 +28,15 @@ async function applyMigrations(): Promise<void> {
       ADD COLUMN IF NOT EXISTS "notifyNew"   BOOLEAN NOT NULL DEFAULT true,
       ADD COLUMN IF NOT EXISTS "notifyOther" BOOLEAN NOT NULL DEFAULT true;
   `);
+  // Discovery telemetry on WatchedUser. Drives the cron auto-rediscovery
+  // loop in /api/cron/poll/route.ts and lets the dashboard render
+  // tier-aware copy ("via search", "auto-retry every 6h", etc.).
+  await prismaBase.$executeRawUnsafe(`
+    ALTER TABLE "WatchedUser"
+      ADD COLUMN IF NOT EXISTS "discoveryStatus" TEXT NOT NULL DEFAULT 'ok',
+      ADD COLUMN IF NOT EXISTS "discoveryVia" TEXT,
+      ADD COLUMN IF NOT EXISTS "lastDiscoveryAttemptAt" TIMESTAMP;
+  `);
 
   // One-shot data backfills. Each is gated on the column being null
   // (or another idempotency check) so a successful subsequent
