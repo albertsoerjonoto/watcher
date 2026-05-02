@@ -1015,17 +1015,23 @@ const MAX_USER_PLAYLIST_PAGES = 4;
  * by the rate-limit chokepoint and may rotate the user's access token.
  *
  * Fallback chain on 403:
- *   - Tier 1 (default): user OAuth token. Works for most users.
- *   - Tier 2: Client Credentials (app token). Different quota pool, not
- *     subject to user-scope restrictions. Works if SPOTIFY_CLIENT_SECRET
- *     is configured. Many users that 403 on Tier 1 (third-party access
- *     disabled in their privacy settings) succeed on Tier 2 because app
- *     tokens are not gated by user-scope privacy settings — only
- *     playlist-level public/private state.
- *   - Tier 3: anonymous token scraped from a public embed page, hitting
- *     api.spotify.com directly. Same /users/{id}/playlists endpoint, but
- *     the anonymous token has no user identity, so per-account privacy
- *     restrictions don't apply.
+ *   - Tier 1 (default): user OAuth token, api.spotify.com /users/{id}/playlists.
+ *     Works for most users.
+ *   - Tier 2: Client Credentials (app token), same endpoint. Different quota
+ *     pool, not subject to user-scope restrictions. Works if
+ *     SPOTIFY_CLIENT_SECRET is configured. Many users that 403 on Tier 1
+ *     (third-party access disabled in their privacy settings) succeed on
+ *     Tier 2 because app tokens are not gated by user-scope privacy settings.
+ *   - Tier 3: spclient.wg.spotify.com /user-profile-view/v3/profile/{id}
+ *     (parent profile object) with the user OAuth token. Empirically
+ *     succeeds for users whose api.spotify.com 403s on third-party
+ *     privacy — Spotify exposes the public-playlist list here even when
+ *     they hide it on the standard Web API.
+ *   - Tier 4: spclient.wg.spotify.com /user-profile-view/v3/profile/{id}/playlists
+ *     subroute (separate from the parent profile object). The Spotify web
+ *     player itself uses BOTH endpoints; the subroute may have different
+ *     access semantics than the parent (some users have their profile
+ *     metadata locked but their playlists list still readable here).
  *
  * 429s anywhere in the chain are fatal (do NOT escalate to next tier —
  * they all share Spotify's per-IP / per-account bucket). 403/404 from a
@@ -1041,6 +1047,10 @@ export async function fetchUserPublicPlaylists(
 }> {
   let user = userIn;
   let firstTierError: SpotifyError | null = null;
+  // Per-tier outcome strings for the final error message + telemetry.
+  // Each tier writes its own slot; "skipped" means we never tried it
+  // (e.g. tier 2 when SPOTIFY_CLIENT_SECRET is missing).
+  const attempted: { t1?: string; t2?: string; t3?: string; t4?: string } = {};
 
   // Tier 1: user OAuth token. The vast majority of watched users go
   // through this path successfully.
@@ -1049,10 +1059,12 @@ export async function fetchUserPublicPlaylists(
       user,
       spotifyUserId,
     );
+    attempted.t1 = `ok(${result.playlists.length})`;
     return result;
   } catch (e) {
     if (e instanceof SpotifyError && (e.status === 403 || e.status === 404)) {
       firstTierError = e;
+      attempted.t1 = `${e.status}`;
       console.warn(
         `[fetchUserPublicPlaylists] tier 1 (user token) returned ${e.status} for ${spotifyUserId} — escalating to fallbacks`,
       );
@@ -1066,6 +1078,11 @@ export async function fetchUserPublicPlaylists(
   // Tier 2: Client Credentials (app token). Returns null silently if
   // SPOTIFY_CLIENT_SECRET is not configured or first page is blocked.
   const appResult = await fetchUserPublicPlaylistsWithAppToken(spotifyUserId);
+  if (appResult) {
+    attempted.t2 = `ok(${appResult.playlists.length})`;
+  } else {
+    attempted.t2 = process.env.SPOTIFY_CLIENT_SECRET ? "blocked" : "skipped";
+  }
   if (appResult && appResult.playlists.length > 0) {
     console.warn(
       `[fetchUserPublicPlaylists] tier 2 (app token) returned ${appResult.playlists.length} for ${spotifyUserId} after tier 1 returned ${firstTierError?.status}`,
@@ -1073,9 +1090,9 @@ export async function fetchUserPublicPlaylists(
     return { user, playlists: appResult.playlists, truncated: appResult.truncated };
   }
 
-  // Tier 3: spclient JSON endpoint. Uses the SAME user OAuth token as
-  // Tier 1 but a different host (spclient.wg.spotify.com) and endpoint
-  // (/user-profile-view/v3/profile). Empirically, this endpoint succeeds
+  // Tier 3: spclient parent profile endpoint with the SAME user OAuth
+  // token as Tier 1 but a different host (spclient.wg.spotify.com) and
+  // endpoint (/user-profile-view/v3/profile/{id}). Empirically succeeds
   // for users whose api.spotify.com /users/{id}/playlists 403s on
   // third-party privacy settings — Spotify exposes the public-playlist
   // list here even when they hide it on the standard Web API.
@@ -1091,9 +1108,10 @@ export async function fetchUserPublicPlaylists(
   );
   if (spclientResult) {
     user = spclientResult.user;
+    attempted.t3 = `ok(${spclientResult.playlists.length})`;
     if (spclientResult.playlists.length > 0) {
       console.warn(
-        `[fetchUserPublicPlaylists] tier 3 (spclient) returned ${spclientResult.playlists.length} for ${spotifyUserId} after tier 1 returned ${firstTierError?.status}`,
+        `[fetchUserPublicPlaylists] tier 3 (spclient profile) returned ${spclientResult.playlists.length} for ${spotifyUserId} after tier 1 returned ${firstTierError?.status}`,
       );
       return {
         user,
@@ -1101,13 +1119,40 @@ export async function fetchUserPublicPlaylists(
         truncated: spclientResult.truncated,
       };
     }
+  } else {
+    attempted.t3 = "blocked";
+  }
+
+  // Tier 4: spclient `/profile/{id}/playlists` subroute. The Spotify
+  // web player constructs both `…/profile/{id}` (Tier 3) and
+  // `…/profile/{id}/playlists` (this tier) — the subroute is dedicated
+  // to enumerating playlists and may return data even when the parent
+  // profile endpoint 403s for users with profile-level privacy
+  // settings but playlist-level visibility.
+  const spclientPlaylistsResult =
+    await fetchUserPublicPlaylistsWithSpclientPlaylists(user, spotifyUserId);
+  if (spclientPlaylistsResult) {
+    user = spclientPlaylistsResult.user;
+    attempted.t4 = `ok(${spclientPlaylistsResult.playlists.length})`;
+    if (spclientPlaylistsResult.playlists.length > 0) {
+      console.warn(
+        `[fetchUserPublicPlaylists] tier 4 (spclient playlists subroute) returned ${spclientPlaylistsResult.playlists.length} for ${spotifyUserId} after tier 1 returned ${firstTierError?.status}`,
+      );
+      return {
+        user,
+        playlists: spclientPlaylistsResult.playlists,
+        truncated: spclientPlaylistsResult.truncated,
+      };
+    }
+  } else {
+    attempted.t4 = "blocked";
   }
 
   // App-token reachable but found 0 playlists — accept as truth (the
   // user genuinely has no public playlists Spotify is exposing to us).
   if (appResult) {
     console.warn(
-      `[fetchUserPublicPlaylists] tier 2 reachable but 0 playlists for ${spotifyUserId} — treating as empty`,
+      `[fetchUserPublicPlaylists] tier 2 reachable but 0 playlists for ${spotifyUserId} — treating as empty (attempted=${JSON.stringify(attempted)})`,
     );
     return { user, playlists: appResult.playlists, truncated: appResult.truncated };
   }
@@ -1117,12 +1162,15 @@ export async function fetchUserPublicPlaylists(
   // global cooldown when we tried it (May 2026). Spotify's anonymous
   // Web API quota is shared across all anon callers from Vercel's IP
   // range, and a 429 there poisons our entire app.
+  console.warn(
+    `[fetchUserPublicPlaylists] all tiers exhausted for ${spotifyUserId}, attempted=${JSON.stringify(attempted)}`,
+  );
   const isAppTokenConfigured = Boolean(
     process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET,
   );
   const hint = isAppTokenConfigured
-    ? "Both app-token and spclient fallbacks failed."
-    : "App-token fallback is not configured (SPOTIFY_CLIENT_SECRET is unset); spclient fallback also failed.";
+    ? `App-token, spclient profile, and spclient playlists subroute all failed (attempted=${JSON.stringify(attempted)}).`
+    : `App-token fallback is not configured (SPOTIFY_CLIENT_SECRET is unset); spclient fallbacks also failed (attempted=${JSON.stringify(attempted)}).`;
   throw firstTierError
     ? new SpotifyError(
         firstTierError.status,
@@ -1355,6 +1403,194 @@ async function fetchUserPublicPlaylistsWithSpclient(
   const truncated =
     typeof data.total_public_playlists_count === "number" &&
     data.total_public_playlists_count > playlists.length;
+
+  return { user, playlists, truncated };
+}
+
+/**
+ * Tier 4: spclient `/user-profile-view/v3/profile/{id}/playlists` SUBROUTE
+ * with the user's OAuth token. The Spotify web player constructs both the
+ * parent `…/profile/{id}` (Tier 3) and this `…/profile/{id}/playlists`
+ * subroute. The subroute is dedicated to playlist enumeration and may
+ * have different access semantics: some users have their parent profile
+ * blocked but the playlists list still readable here.
+ *
+ * Endpoint:
+ *   GET https://spclient.wg.spotify.com/user-profile-view/v3/profile/{id}/playlists
+ *     ?market=from_token&offset=0&limit=50
+ *   Headers:
+ *     Authorization: Bearer {user_access_token}
+ *     Accept: application/json
+ *     App-Platform: WebPlayer
+ *
+ * Response shape varies — defensively parse three known/likely candidates:
+ *   1. Top-level `public_playlists: [...]` (mirrors Tier 3 parent shape)
+ *   2. Top-level `playlists: [...]`
+ *   3. Top-level `items: [...]` with a `next`/`total` field
+ *
+ * Each item carries a `uri` field of the form `spotify:playlist:{id}`,
+ * a `name`, an optional `image_url` (HTTPS or `spotify:mosaic:` — drop
+ * mosaic), and either an `owner_uri` (`spotify:user:{id}`) or no owner
+ * field at all (in which case attribute the playlist to the watched
+ * user we're enumerating for).
+ *
+ * Pagination: cap at 4 pages × 50 = 200 to mirror Tier 1/2/3 behavior
+ * and stay well under the 20-call rolling window. If `next`/`total`
+ * indicates more, mark truncated.
+ *
+ * Returns null on 401/403/404 (escalation handled by the caller, but
+ * this is the LAST tier in the chain) or on 429 (don't extend the
+ * cooldown by escalating).
+ */
+async function fetchUserPublicPlaylistsWithSpclientPlaylists(
+  userIn: User,
+  spotifyUserId: string,
+): Promise<{
+  user: User;
+  playlists: SpotifyUserPlaylistItem[];
+  truncated: boolean;
+} | null> {
+  let user = await ensureFreshToken(userIn);
+
+  const out: SpotifyUserPlaylistItem[] = [];
+  let truncated = false;
+  let totalReported: number | null = null;
+  // Track which page-shape we observed so we know whether `next`-style
+  // pagination is in play; some shapes don't paginate at all.
+  let lastPageHadNext = false;
+
+  for (let page = 0; page < MAX_USER_PLAYLIST_PAGES; page++) {
+    const offset = page * 50;
+    const url = `https://spclient.wg.spotify.com/user-profile-view/v3/profile/${encodeURIComponent(spotifyUserId)}/playlists?market=from_token&offset=${offset}&limit=50`;
+    const headers = {
+      Authorization: `Bearer ${user.accessToken}`,
+      Accept: "application/json",
+      "App-Platform": "WebPlayer",
+    };
+
+    let res: SpotifyFetchResultLike;
+    try {
+      res = await spotifyFetch(url, { headers });
+    } catch (e) {
+      if (e instanceof SpotifyRateLimitError) return null;
+      throw e;
+    }
+
+    if (res.status === 401) {
+      // Token may have just expired between ensureFreshToken and the
+      // fetch — refresh and retry once. Mirrors Tier 3 behavior.
+      user = await refreshAccessToken(user);
+      try {
+        res = await spotifyFetch(url, {
+          headers: { ...headers, Authorization: `Bearer ${user.accessToken}` },
+        });
+      } catch (e) {
+        if (e instanceof SpotifyRateLimitError) return null;
+        throw e;
+      }
+    }
+
+    if (!res.ok) {
+      // First-page failure → return null so the caller knows this tier
+      // wasn't reachable. Later-page failure → keep what we collected.
+      if (page === 0) return null;
+      truncated = true;
+      break;
+    }
+
+    interface SpclientPlaylistsResponse {
+      public_playlists?: Array<{
+        uri?: string;
+        name?: string;
+        image_url?: string;
+        owner_name?: string;
+        owner_uri?: string;
+      }>;
+      playlists?: Array<{
+        uri?: string;
+        name?: string;
+        image_url?: string;
+        owner_name?: string;
+        owner_uri?: string;
+      }>;
+      items?: Array<{
+        uri?: string;
+        name?: string;
+        image_url?: string;
+        owner_name?: string;
+        owner_uri?: string;
+      }>;
+      total_public_playlists_count?: number;
+      total?: number;
+      next?: string | null;
+    }
+    let data: SpclientPlaylistsResponse;
+    try {
+      data = await res.json<SpclientPlaylistsResponse>();
+    } catch {
+      return null;
+    }
+
+    const items = Array.isArray(data?.public_playlists)
+      ? data.public_playlists
+      : Array.isArray(data?.playlists)
+        ? data.playlists
+        : Array.isArray(data?.items)
+          ? data.items
+          : [];
+
+    for (const p of items) {
+      if (!p?.uri) continue;
+      const idMatch = p.uri.match(/^spotify:playlist:([A-Za-z0-9]+)/);
+      if (!idMatch) continue;
+      const ownerIdMatch = p.owner_uri?.match(/^spotify:user:(.+)/);
+      // Drop spotify:mosaic: image URLs — they're not HTTPS. The
+      // post-poll attach hook backfills imageUrl from the playlist's
+      // /playlists/{id} fetch.
+      const imageUrl =
+        typeof p.image_url === "string" && p.image_url.startsWith("https://")
+          ? p.image_url
+          : null;
+      out.push({
+        id: idMatch[1],
+        name: p.name ?? idMatch[1],
+        images: imageUrl ? [{ url: imageUrl }] : undefined,
+        owner: {
+          id: ownerIdMatch?.[1] ?? spotifyUserId,
+          display_name: p.owner_name,
+        },
+      });
+    }
+
+    if (typeof data.total_public_playlists_count === "number") {
+      totalReported = data.total_public_playlists_count;
+    } else if (typeof data.total === "number") {
+      totalReported = data.total;
+    }
+
+    lastPageHadNext = Boolean(data.next);
+
+    // If response shape didn't report a `next` and didn't fill a full
+    // page, we've drained it.
+    if (!lastPageHadNext && items.length < 50) break;
+    if (page === MAX_USER_PLAYLIST_PAGES - 1) {
+      if (lastPageHadNext) truncated = true;
+      else if (totalReported !== null && totalReported > out.length) truncated = true;
+    }
+  }
+
+  // De-dupe by playlist id in case the response shape over-paginated.
+  const seen = new Set<string>();
+  const playlists: SpotifyUserPlaylistItem[] = [];
+  for (const p of out) {
+    if (seen.has(p.id)) continue;
+    seen.add(p.id);
+    playlists.push(p);
+  }
+
+  if (totalReported !== null && totalReported > playlists.length) {
+    truncated = true;
+  }
 
   return { user, playlists, truncated };
 }
