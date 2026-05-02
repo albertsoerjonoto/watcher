@@ -131,12 +131,12 @@ export function AutoRefresh() {
   }, []);
 
   let Icon: typeof RefreshCw = RefreshCw;
-  let iconClass = "h-5 w-5 text-neutral-500 dark:text-neutral-400";
+  let iconClass = "h-5 w-5";
   let label: string = "Sync now";
   let disabled = false;
   if (state.kind === "checking") {
     Icon = RefreshCw;
-    iconClass = "h-5 w-5 animate-spin text-neutral-500 dark:text-neutral-400";
+    iconClass = "h-5 w-5 animate-spin";
     label = "Checking…";
     disabled = true;
   } else if (state.kind === "syncing") {
@@ -150,7 +150,7 @@ export function AutoRefresh() {
     label = state.new > 0 ? `+${state.new} new` : "Up to date";
   } else if (state.kind === "fresh") {
     Icon = Check;
-    iconClass = "h-5 w-5 text-neutral-500 dark:text-neutral-400";
+    iconClass = "h-5 w-5";
     label = "Up to date";
   } else if (state.kind === "rateLimited") {
     Icon = Clock;
@@ -173,7 +173,7 @@ export function AutoRefresh() {
       disabled={disabled}
       title={label}
       aria-label={label}
-      className="text-neutral-600 hover:text-black dark:text-neutral-300 dark:hover:text-white disabled:opacity-60"
+      className="text-neutral-400 hover:text-black dark:hover:text-white disabled:opacity-60"
     >
       <Icon className={iconClass} />
     </button>

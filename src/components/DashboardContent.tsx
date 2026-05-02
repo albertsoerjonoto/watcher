@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import useSWR from "swr";
 import Link from "next/link";
 import { ArrowUpDown, Pencil, Plus } from "lucide-react";
@@ -52,8 +53,73 @@ export function DashboardContent({ fallbackData }: Props) {
   // (Edit > Move ↑/↓), with all sections expanded.
   const [sortMode, setSortMode] = useState<"weekly" | "manual">("weekly");
 
+  // Add / Sort / Edit live in the global top nav (rendered by the
+  // root layout) via a portal slot, so they're visually adjacent to
+  // the Sync and Settings icons rather than redundant per-watched-user.
+  const [toolbarTarget, setToolbarTarget] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setToolbarTarget(document.getElementById("dashboard-toolbar-slot"));
+  }, []);
+
+  const toolbar = (
+    <div className="flex items-center gap-4">
+      <button
+        type="button"
+        onClick={() => {
+          setShowAdd(!showAdd);
+          if (editing) setEditing(false);
+        }}
+        title={showAdd ? "Hide add form" : "Add playlist or watched user"}
+        aria-label="Add"
+        className={
+          showAdd
+            ? "text-spotify"
+            : "text-neutral-400 hover:text-black dark:hover:text-white"
+        }
+      >
+        <Plus className="h-5 w-5" />
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          setSortMode(sortMode === "weekly" ? "manual" : "weekly")
+        }
+        title={
+          sortMode === "manual"
+            ? "Currently in your manual order. Click to sort by adds-this-week."
+            : "Sorting by adds-this-week. Click to switch to your manual order."
+        }
+        aria-label="Toggle sort order"
+        className={
+          sortMode === "manual"
+            ? "text-spotify"
+            : "text-neutral-400 hover:text-black dark:hover:text-white"
+        }
+      >
+        <ArrowUpDown className="h-5 w-5" />
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setEditing(!editing);
+          if (showAdd) setShowAdd(false);
+        }}
+        title={editing ? "Done editing" : "Edit playlists"}
+        aria-label="Edit"
+        className={
+          editing
+            ? "text-spotify"
+            : "text-neutral-400 hover:text-black dark:hover:text-white"
+        }
+      >
+        <Pencil className="h-5 w-5" />
+      </button>
+    </div>
+  );
+
   return (
     <section className="space-y-6">
+      {toolbarTarget && createPortal(toolbar, toolbarTarget)}
       <InstallHint />
 
       {needsReauth && (
@@ -117,61 +183,6 @@ export function DashboardContent({ fallbackData }: Props) {
         errorByPlaylist={errorByPlaylist}
         editing={editing}
         sortMode={sortMode}
-        toolbar={
-          <div className="flex items-center gap-3 text-sm">
-            <button
-              type="button"
-              onClick={() => {
-                setShowAdd(!showAdd);
-                if (editing) setEditing(false);
-              }}
-              title={showAdd ? "Hide add form" : "Add playlist or watched user"}
-              aria-label="Add"
-              className={
-                showAdd
-                  ? "text-spotify"
-                  : "text-neutral-500 hover:text-black dark:text-neutral-400 dark:hover:text-white"
-              }
-            >
-              <Plus className="h-5 w-5" />
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                setSortMode(sortMode === "weekly" ? "manual" : "weekly")
-              }
-              title={
-                sortMode === "manual"
-                  ? "Currently in your manual order. Click to sort by adds-this-week."
-                  : "Sorting by adds-this-week. Click to switch to your manual order."
-              }
-              aria-label="Toggle sort order"
-              className={
-                sortMode === "manual"
-                  ? "text-spotify"
-                  : "text-neutral-500 hover:text-black dark:text-neutral-400 dark:hover:text-white"
-              }
-            >
-              <ArrowUpDown className="h-5 w-5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEditing(!editing);
-                if (showAdd) setShowAdd(false);
-              }}
-              title={editing ? "Done editing" : "Edit playlists"}
-              aria-label="Edit"
-              className={
-                editing
-                  ? "text-spotify"
-                  : "text-neutral-500 hover:text-black dark:text-neutral-400 dark:hover:text-white"
-              }
-            >
-              <Pencil className="h-5 w-5" />
-            </button>
-          </div>
-        }
       />
     </section>
   );

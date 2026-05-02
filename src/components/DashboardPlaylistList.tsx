@@ -37,7 +37,6 @@ interface Props {
   errorByPlaylist: Record<string, string>;
   editing?: boolean;
   sortMode?: SortMode;
-  toolbar?: React.ReactNode;
 }
 
 interface SectionBuckets {
@@ -125,7 +124,6 @@ export function DashboardPlaylistList({
   errorByPlaylist,
   editing = false,
   sortMode = "weekly",
-  toolbar,
 }: Props) {
   const [playlists, setPlaylists] = useState(initialPlaylists);
   // Mirror of playlists state for reading inside async queue callbacks
@@ -392,7 +390,6 @@ export function DashboardPlaylistList({
             onMove={movePlaylist}
             onDelete={deletePlaylist}
             onSection={setSection}
-            toolbar={idx === 0 ? toolbar : undefined}
           />
         );
       })}
@@ -413,7 +410,6 @@ export function DashboardPlaylistList({
             onMove={movePlaylist}
             onDelete={deletePlaylist}
             onSection={setSection}
-            toolbar={initialWatchedUsers.length === 0 ? toolbar : undefined}
           />
         )}
     </>
@@ -432,7 +428,6 @@ interface GroupProps {
   onMove: (id: string, dir: "up" | "down") => void;
   onDelete: (id: string) => void;
   onSection: (id: string, target: Section) => Promise<void>;
-  toolbar?: React.ReactNode;
 }
 
 function WatchedUserGroup({
@@ -448,7 +443,6 @@ function WatchedUserGroup({
   onMove,
   onDelete,
   onSection,
-  toolbar,
 }: GroupProps & { watchedUser: WatchedUserRow }) {
   const { mutate } = useSWRConfig();
   const [syncing, setSyncing] = useState(false);
@@ -592,7 +586,6 @@ function WatchedUserGroup({
               Stop watching
             </button>
           )}
-          {toolbar}
         </div>
       </div>
 
@@ -636,7 +629,6 @@ function OrphanGroup(props: GroupProps) {
             added by URL, not yet polled
           </span>
         </h2>
-        {props.toolbar}
       </div>
       {getRenderOrder(props.buckets).map((section) => {
         const rows = props.buckets[section];
@@ -797,7 +789,7 @@ function SectionList({
         <button
           type="button"
           onClick={() => setShowInactive((v) => !v)}
-          className="w-full rounded border border-dashed border-neutral-200 px-3 py-1.5 text-xs text-neutral-500 hover:bg-neutral-100 dark:border-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-900"
+          className="w-full rounded px-3 py-1.5 text-[10px] text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-900"
         >
           {showInactive
             ? `Hide ${inactiveCount} inactive`
@@ -911,10 +903,12 @@ function PlaylistRowItem({
                 +{weekCount} this week
               </span>
             )}
+            <span className="ml-auto shrink-0 text-[10px] text-neutral-400">
+              checked {formatDateTimeJakarta(p.lastCheckedAt)}
+            </span>
           </div>
           <div className="text-xs text-neutral-500 dark:text-neutral-400">
-            {p._count.tracks} songs · checked{" "}
-            {formatDateTimeJakarta(p.lastCheckedAt)}
+            {p._count.tracks} songs
             {p.status !== "active" && (
               <span className="ml-2 text-amber-600 dark:text-amber-400">
                 ({p.status})
