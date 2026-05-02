@@ -5,6 +5,11 @@ your phone every time a new track is added. Built with Next.js 14 (App
 Router) + Prisma (SQLite) + Web Push. iOS Safari is supported once the app
 is "Added to Home Screen".
 
+> **Working on this with a Claude agent?** Read
+> [`AUTONOMOUS_LOOP.md`](./AUTONOMOUS_LOOP.md) (universal philosophy) and
+> [`CLAUDE.md`](./CLAUDE.md) (project-specific commands and guardrails)
+> in that order.
+
 Phase 2 (native SwiftUI iOS client that reuses this backend) is intentionally
 deferred — the DB already has a `DeviceToken` table so the dispatcher can fan
 out to APNs later without schema changes.

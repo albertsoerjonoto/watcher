@@ -3,6 +3,13 @@
 Monitors Spotify playlists and sends web push notifications when new tracks
 are added. Filters out self-additions. PWA-first, deployed on Vercel.
 
+> **Read [`AUTONOMOUS_LOOP.md`](./AUTONOMOUS_LOOP.md) first.** It's the
+> standing system prompt for this account: goal-driven execution,
+> continuous iteration, real verification, surgical changes. This file
+> only adds project-specific commands, file map, and rate-limit
+> guardrails on top of that. If anything here contradicts
+> AUTONOMOUS_LOOP.md, AUTONOMOUS_LOOP.md wins.
+
 ## Tech Stack
 
 - **Framework:** Next.js 14 (App Router), TypeScript
@@ -58,12 +65,16 @@ are added. Filters out self-additions. PWA-first, deployed on Vercel.
 
 ---
 
-# Agent loop — autonomous develop → deploy → QA → iterate
+# Agent loop — autonomous develop → deploy → QA → iterate → repeat
 
 This repo expects Claude agents to ship features end-to-end without
-human intervention between code change and verified-on-prod. When a
-user asks for a feature, run the full loop. Don't stop at "I wrote the
-code" — stop at "I saw it work on https://playlistwatcher.vercel.app".
+human intervention between code change and verified-on-prod, and to
+**keep iterating after the first pass succeeds** until a stated stop
+condition (see [`AUTONOMOUS_LOOP.md` §"Stop conditions"](./AUTONOMOUS_LOOP.md#stop-conditions-state-which-one-fired)) is met.
+When a user asks for a feature, run the full loop, then look for the
+next improvement and run it again. Don't stop at "I wrote the code" —
+stop at "the criterion is verifiably met on prod and there's no further
+valuable improvement on the table."
 
 ## The loop
 
@@ -156,6 +167,26 @@ code" — stop at "I saw it work on https://playlistwatcher.vercel.app".
     in-place after merge — open a follow-up PR. Each iteration is
     cheap; a bad rushed merge is expensive.
 
+11. **Continuous improvement loop.** After QA passes, do NOT declare
+    done by default. Scan the post-merge improvement triggers from
+    [`AUTONOMOUS_LOOP.md` §"Continuous-improvement triggers"](./AUTONOMOUS_LOOP.md#continuous-improvement-triggers)
+    — stale docs, dead code, TODOs, security review, design review,
+    perf measurement, observability, test coverage gaps, schema
+    drift. Each trigger that fires is either a same-session follow-up
+    PR (preferred) or a tracked TODO. Only stop when a stop condition
+    from `AUTONOMOUS_LOOP.md` is genuinely met — and state which one.
+
+12. **Race-aware before opening a PR.** Multiple agents may be
+    working in parallel. Run:
+    ```
+    git fetch origin main --quiet
+    git log origin/main -5 --oneline
+    ```
+    If main moved past your branch base, rebase before push. Before
+    `gh api -X PUT .../merge`, re-check `gh pr view <num> --json
+    mergeable -q .mergeable` — if it says `CONFLICTING`, rebase or
+    close as superseded rather than force-fixing in flight.
+
 ## Cloud / mobile variant
 
 Claude Code Mobile and other cloud sessions run on a fresh GitHub
@@ -193,11 +224,37 @@ notifications, OAuth flows, cron behavior), be honest in the PR
 body about what's unverified rather than overclaiming "verified on
 prod". The user can confirm out of band.
 
+## Infrastructure access (Vercel, Supabase, GitHub)
+
+The user is already logged in to Vercel, Supabase, and GitHub on their
+desktop. You operate within those authenticated sessions — never enter
+passwords. The right tool by environment:
+
+- **GitHub:** `gh` CLI is the default for everything (PRs, releases,
+  issues, branches, commits). Use it from any environment.
+- **Vercel:** the [Vercel project dashboard](https://vercel.com/albertsoerjonotos-projects/watcher)
+  via Chrome MCP (local) is fine for inspecting deploys, env vars, and
+  logs. The `vercel` CLI works locally if installed. For env-var
+  changes use the dashboard via Chrome MCP — read the change back to
+  confirm before declaring done.
+- **Supabase / Neon (DB):** schema migrations are lazy at runtime via
+  `src/lib/db.ts` — see "Schema migrations" below. For destructive ops
+  (drop column, drop table, rename) you need DIRECT_URL set locally
+  and `npm run db:push`; ask once before doing this and proceed only
+  on explicit "yes."
+
+For destructive ops on any of these (delete project, change billing,
+drop tables, rotate secrets, public env-var changes), confirm with the
+user once and proceed only after explicit "yes." Read state freely.
+
 ## Things that bite agents
 
 - `gh pr merge` — fails locally with "main is already used by
   worktree". Use the API call shown in step 7. (Doesn't bite cloud
   sessions — see "Cloud / mobile variant" above.)
+- **Parallel-agent merge conflicts.** Two PRs landing the same minute
+  is real (PR #82 was superseded by #81 — same problem, same minute,
+  different solution). Always race-check per step 12 above.
 - `prisma db push` during build — fails with "Environment variable not
   found: DATABASE_URL". Vercel's build env doesn't expose runtime env
   vars by default. See "Schema migrations" below.
