@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useSWRConfig } from "swr";
+import { AlertCircle, Check, Clock, RefreshCw } from "lucide-react";
 import { DASHBOARD_KEY } from "./DashboardContent";
 
 // Mounted on the dashboard. Before firing the real /api/refresh (which
@@ -129,31 +130,38 @@ export function AutoRefresh() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  let dotClass = "bg-neutral-700";
-  let label: string = "ready";
+  let Icon: typeof RefreshCw = RefreshCw;
+  let iconClass = "h-5 w-5 text-neutral-500 dark:text-neutral-400";
+  let label: string = "Sync now";
   let disabled = false;
   if (state.kind === "checking") {
-    dotClass = "animate-pulse bg-neutral-500";
-    label = "checking…";
+    Icon = RefreshCw;
+    iconClass = "h-5 w-5 animate-spin text-neutral-500 dark:text-neutral-400";
+    label = "Checking…";
     disabled = true;
   } else if (state.kind === "syncing") {
-    dotClass = "animate-pulse bg-spotify";
-    label = "syncing…";
+    Icon = RefreshCw;
+    iconClass = "h-5 w-5 animate-spin text-spotify";
+    label = "Syncing…";
     disabled = true;
   } else if (state.kind === "ok") {
-    dotClass = "bg-spotify";
-    label = state.new > 0 ? `+${state.new} new` : "up to date";
+    Icon = Check;
+    iconClass = "h-5 w-5 text-spotify";
+    label = state.new > 0 ? `+${state.new} new` : "Up to date";
   } else if (state.kind === "fresh") {
-    dotClass = "bg-neutral-600";
-    label = "up to date";
+    Icon = Check;
+    iconClass = "h-5 w-5 text-neutral-500 dark:text-neutral-400";
+    label = "Up to date";
   } else if (state.kind === "rateLimited") {
-    dotClass = "bg-amber-500";
+    Icon = Clock;
+    iconClass = "h-5 w-5 text-amber-500";
     label = state.secondsRemaining
-      ? `rate limited · ${state.secondsRemaining}s`
-      : "rate limited";
+      ? `Rate limited — retry in ${state.secondsRemaining}s`
+      : "Rate limited";
   } else if (state.kind === "error") {
-    dotClass = "bg-red-500";
-    label = "sync error";
+    Icon = AlertCircle;
+    iconClass = "h-5 w-5 text-red-500";
+    label = state.message || "Sync error";
   }
 
   if (state.kind === "idle") return null;
@@ -163,19 +171,11 @@ export function AutoRefresh() {
       type="button"
       onClick={() => run(true)}
       disabled={disabled}
-      title={
-        state.kind === "error"
-          ? state.message
-          : state.kind === "rateLimited"
-            ? `Spotify rate-limited — retry in ${state.secondsRemaining}s`
-            : "Sync now"
-      }
-      className="flex items-center gap-1.5 rounded border border-neutral-200 px-2 py-1 text-[10px] text-neutral-500 hover:bg-neutral-100 dark:border-neutral-800 dark:hover:bg-neutral-900 disabled:opacity-60"
+      title={label}
+      aria-label={label}
+      className="text-neutral-600 hover:text-black dark:text-neutral-300 dark:hover:text-white disabled:opacity-60"
     >
-      <span
-        className={`inline-block h-1.5 w-1.5 rounded-full ${dotClass}`}
-      />
-      {label}
+      <Icon className={iconClass} />
     </button>
   );
 }
