@@ -15,6 +15,7 @@ interface FeedRow {
   addedAt: Date;
   playlistId: string;
   playlistName: string;
+  playlistImageUrl: string | null;
   section: string;
   spotifyTrackId: string;
 }
@@ -52,7 +53,8 @@ export default async function FeedPage({
     filter === "all" ? Prisma.empty : Prisma.sql`AND p."section" = ${filter}`;
   const events = await prisma.$queryRaw<FeedRow[]>(Prisma.sql`
     SELECT t.id, t.title, t.artists, t."albumImageUrl", t."addedAt", t."spotifyTrackId",
-           p.id AS "playlistId", p.name AS "playlistName", p."section" AS "section"
+           p.id AS "playlistId", p.name AS "playlistName",
+           p."imageUrl" AS "playlistImageUrl", p."section" AS "section"
     FROM "Track" t
     JOIN "Playlist" p ON t."playlistId" = p.id
     WHERE p."userId" = ${user.id}
@@ -121,9 +123,21 @@ export default async function FeedPage({
             <div key={playlistId} className="space-y-2">
               <Link
                 href={`/playlists/${playlistId}`}
-                className="block truncate text-base font-semibold hover:underline"
+                className="flex items-center gap-2 text-base font-semibold"
               >
-                {items[0].playlistName}
+                {items[0].playlistImageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={items[0].playlistImageUrl}
+                    alt=""
+                    className="h-7 w-7 shrink-0 rounded object-cover"
+                  />
+                ) : (
+                  <div className="h-7 w-7 shrink-0 rounded bg-neutral-200 dark:bg-neutral-800" />
+                )}
+                <span className="truncate hover:underline">
+                  {items[0].playlistName}
+                </span>
               </Link>
               <ul className="divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
                 {items.map((e) => {
