@@ -1,7 +1,7 @@
 import "./globals.css";
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
-import { LayoutDashboard, Newspaper, Settings as SettingsIcon } from "lucide-react";
+import { LayoutDashboard, Newspaper, ListMusic, Settings as SettingsIcon } from "lucide-react";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { PerfTracker } from "@/components/PerfTracker";
 import { SWRegister } from "@/components/SWRegister";
@@ -45,6 +45,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               className="text-neutral-600 hover:text-black dark:text-neutral-300 dark:hover:text-white"
             >
               <Newspaper className="h-5 w-5" />
+            </Link>
+            <Link
+              href="/playlists"
+              title="Playlists"
+              aria-label="Playlists"
+              className="text-neutral-600 hover:text-black dark:text-neutral-300 dark:hover:text-white"
+            >
+              <ListMusic className="h-5 w-5" />
             </Link>
             <div className="ml-auto flex items-center gap-4">
               <div className="flex items-center gap-3 rounded-lg border border-neutral-200 px-2 py-1 dark:border-neutral-800">
