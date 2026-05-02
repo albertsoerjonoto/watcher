@@ -16,6 +16,7 @@ const SECTION_LABEL: Record<Section, string> = {
 interface PlaylistRow {
   id: string;
   name: string;
+  imageUrl: string | null;
   notifyEnabled: boolean;
   watchedUserId: string | null;
   section: Section;
@@ -211,7 +212,17 @@ export function NotificationToggles({ watchedUsers, playlists }: Props) {
                               }
                               aria-label={`Toggle ${p.name}`}
                             />
-                            <span>{p.name}</span>
+                            {p.imageUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={p.imageUrl}
+                                alt=""
+                                className="h-8 w-8 shrink-0 rounded object-cover"
+                              />
+                            ) : (
+                              <div className="h-8 w-8 shrink-0 rounded bg-neutral-200 dark:bg-neutral-800" />
+                            )}
+                            <span className="truncate">{p.name}</span>
                           </li>
                         ))}
                       </ul>

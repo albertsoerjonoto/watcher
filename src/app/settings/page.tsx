@@ -102,6 +102,7 @@ export default async function SettingsPage() {
           playlists={playlists.map((p) => ({
             id: p.id,
             name: p.name,
+            imageUrl: p.imageUrl,
             notifyEnabled: p.notifyEnabled,
             watchedUserId: p.watchedUserId,
             section: (p.section as "main" | "new" | "other") ?? "main",
