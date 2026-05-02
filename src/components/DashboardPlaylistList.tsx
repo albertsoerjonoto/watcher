@@ -10,6 +10,8 @@ import { DASHBOARD_KEY } from "./dashboard-keys";
 import { formatDateJakarta, formatDateTimeJakarta } from "@/lib/datetime";
 import { MAX_MAIN_PER_WATCHED_USER } from "@/lib/stale";
 
+type SortMode = "weekly" | "manual";
+
 // Re-export the shared types so existing imports
 // (`import { type PlaylistRow } from "./DashboardPlaylistList"`) keep
 // working. The source of truth lives in @/lib/dashboard-data.
@@ -32,7 +34,7 @@ interface Props {
   weekByPlaylist: Record<string, number>;
   errorByPlaylist: Record<string, string>;
   editing?: boolean;
-  sortMode?: "default" | "weekly";
+  sortMode?: SortMode;
   toolbar?: React.ReactNode;
 }
 
@@ -42,12 +44,22 @@ interface SectionBuckets {
   other: PlaylistRow[];
 }
 
+// Used for the per-section sort loop. Render order is computed
+// separately by getRenderOrder so empty New collapses cleanly.
 const SECTION_ORDER: Section[] = ["main", "new", "other"];
 const SECTION_LABELS: Record<Section, string> = {
   main: "Main",
   new: "New",
   other: "Other",
 };
+
+// New goes on top when populated. When empty, it's omitted entirely
+// (no "No playlists in New" placeholder — that hint was noise).
+function getRenderOrder(buckets: SectionBuckets): Section[] {
+  return buckets.new.length > 0
+    ? ["new", "main", "other"]
+    : ["main", "other"];
+}
 
 // Drain the never-polled-yet queue by repeatedly calling
 // /api/playlists/poll-pending until `remaining` is 0. On a 429
@@ -110,7 +122,7 @@ export function DashboardPlaylistList({
   weekByPlaylist,
   errorByPlaylist,
   editing = false,
-  sortMode = "default",
+  sortMode = "weekly",
   toolbar,
 }: Props) {
   const [playlists, setPlaylists] = useState(initialPlaylists);
@@ -142,11 +154,11 @@ export function DashboardPlaylistList({
   // added via POST /api/playlists that haven't been polled yet, so we
   // don't know their owner.
   //
-  // sortMode applies INSIDE each section bucket — Main and Other are
-  // sorted independently. "default" preserves the user's manual
-  // ordering (server-provided sortOrder + insertion order). "weekly"
-  // sorts by adds-this-week count desc, with the default order as a
-  // stable tiebreaker for playlists that share a count (including 0).
+  // sortMode applies INSIDE each section bucket — Main, New, and Other
+  // are sorted independently. "weekly" (default) sorts by
+  // adds-this-week count desc, with manual sortOrder as a stable
+  // tiebreaker. "manual" preserves the user's drag-and-drop ordering
+  // (server-provided sortOrder + insertion order).
   const grouped = useMemo(() => {
     const map = new Map<string, SectionBuckets>();
     const ensure = (key: string): SectionBuckets => {
@@ -373,6 +385,8 @@ export function DashboardPlaylistList({
             weekByPlaylist={weekByPlaylist}
             errorByPlaylist={errorByPlaylist}
             editing={editing}
+            sortMode={sortMode}
+            isFirst={idx === 0}
             onMove={movePlaylist}
             onDelete={deletePlaylist}
             onSection={setSection}
@@ -392,6 +406,8 @@ export function DashboardPlaylistList({
             weekByPlaylist={weekByPlaylist}
             errorByPlaylist={errorByPlaylist}
             editing={editing}
+            sortMode={sortMode}
+            isFirst={initialWatchedUsers.length === 0}
             onMove={movePlaylist}
             onDelete={deletePlaylist}
             onSection={setSection}
@@ -409,6 +425,8 @@ interface GroupProps {
   weekByPlaylist: Record<string, number>;
   errorByPlaylist: Record<string, string>;
   editing: boolean;
+  sortMode: SortMode;
+  isFirst: boolean;
   onMove: (id: string, dir: "up" | "down") => void;
   onDelete: (id: string) => void;
   onSection: (id: string, target: Section) => Promise<void>;
@@ -423,6 +441,8 @@ function WatchedUserGroup({
   weekByPlaylist,
   errorByPlaylist,
   editing,
+  sortMode,
+  isFirst,
   onMove,
   onDelete,
   onSection,
@@ -512,22 +532,26 @@ function WatchedUserGroup({
   const ownerLabel =
     watchedUser.displayName ?? watchedUser.spotifyId ?? "Unknown";
 
+  const wrapperClass = isFirst
+    ? "space-y-3"
+    : "space-y-3 border-t border-neutral-200 pt-6 mt-2 dark:border-neutral-800";
+
   return (
-    <div className="space-y-3">
+    <div className={wrapperClass}>
       <div className="flex items-center justify-between gap-3 px-1">
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 items-center gap-3">
           {watchedUser.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={watchedUser.imageUrl}
               alt=""
-              className="h-7 w-7 shrink-0 rounded-full object-cover"
+              className="h-9 w-9 shrink-0 rounded-full object-cover"
             />
           ) : (
-            <div className="h-7 w-7 shrink-0 rounded-full bg-neutral-200 dark:bg-neutral-800" />
+            <div className="h-9 w-9 shrink-0 rounded-full bg-neutral-200 dark:bg-neutral-800" />
           )}
-          <h2 className="min-w-0 truncate text-xs uppercase tracking-wide text-neutral-500">
-            By {ownerLabel}
+          <h2 className="min-w-0 truncate text-base font-semibold text-neutral-900 dark:text-neutral-100">
+            {ownerLabel}
           </h2>
         </div>
         <div className="flex items-center gap-2 text-xs">
@@ -560,8 +584,11 @@ function WatchedUserGroup({
         </div>
       </div>
 
-      {SECTION_ORDER.map((section) => {
+      {getRenderOrder(buckets).map((section) => {
         const rows = buckets[section];
+        const hasWeeklyActive = rows.some(
+          (p) => (weekByPlaylist[p.id] ?? 0) > 0,
+        );
         return (
           <SectionList
             key={section}
@@ -572,6 +599,8 @@ function WatchedUserGroup({
             weekByPlaylist={weekByPlaylist}
             errorByPlaylist={errorByPlaylist}
             editing={editing}
+            sortMode={sortMode}
+            hasWeeklyActive={hasWeeklyActive}
             onMove={onMove}
             onDelete={onDelete}
             onSection={onSection}
@@ -583,16 +612,25 @@ function WatchedUserGroup({
 }
 
 function OrphanGroup(props: GroupProps) {
+  const wrapperClass = props.isFirst
+    ? "space-y-3"
+    : "space-y-3 border-t border-neutral-200 pt-6 mt-2 dark:border-neutral-800";
   return (
-    <div className="space-y-3">
+    <div className={wrapperClass}>
       <div className="flex items-center justify-between gap-3 px-1">
-        <h2 className="text-xs uppercase tracking-wide text-neutral-500">
-          Pending — added by URL, not yet polled
+        <h2 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
+          Pending
+          <span className="ml-2 text-xs font-normal text-neutral-500">
+            added by URL, not yet polled
+          </span>
         </h2>
         {props.toolbar}
       </div>
-      {SECTION_ORDER.map((section) => {
+      {getRenderOrder(props.buckets).map((section) => {
         const rows = props.buckets[section];
+        const hasWeeklyActive = rows.some(
+          (p) => (props.weekByPlaylist[p.id] ?? 0) > 0,
+        );
         return (
           <SectionList
             key={section}
@@ -603,6 +641,8 @@ function OrphanGroup(props: GroupProps) {
             weekByPlaylist={props.weekByPlaylist}
             errorByPlaylist={props.errorByPlaylist}
             editing={props.editing}
+            sortMode={props.sortMode}
+            hasWeeklyActive={hasWeeklyActive}
             onMove={props.onMove}
             onDelete={props.onDelete}
             onSection={props.onSection}
@@ -621,6 +661,8 @@ interface SectionListProps {
   weekByPlaylist: Record<string, number>;
   errorByPlaylist: Record<string, string>;
   editing: boolean;
+  sortMode: SortMode;
+  hasWeeklyActive: boolean;
   onMove: (id: string, dir: "up" | "down") => void;
   onDelete: (id: string) => void;
   onSection: (id: string, target: Section) => Promise<void>;
@@ -634,26 +676,52 @@ function SectionList({
   weekByPlaylist,
   errorByPlaylist,
   editing,
+  sortMode,
+  hasWeeklyActive,
   onMove,
   onDelete,
   onSection,
 }: SectionListProps) {
-  // Other is collapsible since it can hold ~50 rows. Default collapsed
-  // when non-empty, expanded when empty (so the user sees the empty
-  // hint). Main and New always open.
-  const collapsible = section === "other";
-  const [open, setOpen] = useState(!collapsible || rows.length === 0);
+  // Collapse rules:
+  // - In weekly mode (default): every section is collapsible, and a
+  //   section auto-collapses when nothing in it has adds-this-week.
+  // - In manual mode: only Other is collapsible (legacy behavior),
+  //   and it default-collapses when populated.
+  // - Empty sections always open (so the placeholder is visible).
+  const collapsible = sortMode === "weekly" || section === "other";
+  const weeklyActiveCount = rows.filter(
+    (p) => (weekByPlaylist[p.id] ?? 0) > 0,
+  ).length;
+
+  const defaultOpen =
+    rows.length === 0
+      ? true
+      : sortMode === "manual"
+        ? section !== "other"
+        : hasWeeklyActive;
+
+  const [open, setOpen] = useState(defaultOpen);
+
+  // Re-apply the default whenever the sort context changes (mode flip
+  // or weekly activity changes due to a poll). This is intentional:
+  // toggling sort modes should reset section visibility cleanly,
+  // while a click within a mode still persists until a real change.
+  useEffect(() => {
+    setOpen(defaultOpen);
+  }, [defaultOpen]);
 
   if (rows.length === 0) {
-    // Empty Main or New: render a thin placeholder so the user sees
-    // the structure. Empty Other: collapse the heading completely.
-    if (section === "other") return null;
+    // Empty Other never renders. Empty New is filtered out by
+    // getRenderOrder (so this branch is unreachable for New). Only
+    // Main renders a placeholder when empty.
+    if (section !== "main") return null;
     return (
       <div className="space-y-1">
         <SectionHeader
           section={section}
           count={0}
-          mainCap={section === "main" ? `0 / ${MAX_MAIN_PER_WATCHED_USER}` : null}
+          mainCap={`0 / ${MAX_MAIN_PER_WATCHED_USER}`}
+          weeklyActiveCount={null}
           collapsible={false}
           open={open}
           onToggle={() => setOpen((v) => !v)}
@@ -673,6 +741,11 @@ function SectionList({
         mainCap={
           section === "main"
             ? `${mainCount} / ${MAX_MAIN_PER_WATCHED_USER}`
+            : null
+        }
+        weeklyActiveCount={
+          sortMode === "weekly" && weeklyActiveCount > 0
+            ? weeklyActiveCount
             : null
         }
         collapsible={collapsible}
@@ -707,6 +780,7 @@ function SectionHeader({
   section,
   count,
   mainCap,
+  weeklyActiveCount,
   collapsible,
   open,
   onToggle,
@@ -714,6 +788,7 @@ function SectionHeader({
   section: Section;
   count: number;
   mainCap: string | null;
+  weeklyActiveCount: number | null;
   collapsible: boolean;
   open: boolean;
   onToggle: () => void;
@@ -733,6 +808,11 @@ function SectionHeader({
       )}
       {mainCap && (
         <span className="text-[10px] text-neutral-500">{mainCap}</span>
+      )}
+      {weeklyActiveCount !== null && (
+        <span className="text-[10px] text-spotify">
+          {weeklyActiveCount} active this week
+        </span>
       )}
     </div>
   );

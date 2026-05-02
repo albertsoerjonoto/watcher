@@ -1,6 +1,7 @@
 import { getCurrentUser } from "@/lib/session";
 import { prisma } from "@/lib/db";
 import { NotificationToggles } from "@/components/NotificationToggles";
+import { SectionNotifyToggles } from "@/components/SectionNotifyToggles";
 import { EnablePush } from "@/components/EnablePush";
 
 export const dynamic = "force-dynamic";
@@ -41,6 +42,21 @@ export default async function SettingsPage() {
           {subCount} device(s) subscribed.
         </p>
         <EnablePush />
+      </div>
+
+      <div className="space-y-3 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
+        <h2 className="font-medium">Notify by section</h2>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400">
+          Master switches per section. A playlist notifies only if its
+          section is on AND the playlist itself is enabled below.
+        </p>
+        <SectionNotifyToggles
+          initial={{
+            notifyMain: user.notifyMain,
+            notifyNew: user.notifyNew,
+            notifyOther: user.notifyOther,
+          }}
+        />
       </div>
 
       <div className="space-y-3 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
