@@ -13,7 +13,8 @@
     "db:generate": "prisma generate",
     "db:seed": "tsx prisma/seed.ts",
     "db:backfill": "tsx scripts/backfill-watched-users.ts",
-    "poll": "tsx scripts/poll-once.ts"
+    "poll": "tsx scripts/poll-once.ts",
+    "qa:prod": "tsx scripts/qa-prod.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
