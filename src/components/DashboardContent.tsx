@@ -23,26 +23,28 @@ const fetcher = (url: string) =>
     return r.json();
   });
 
-// No fallbackData — SSR returns just the shell so the function is fast.
-// SWRProvider's localStorage cache means repeat visits paint instantly.
-// First-ever visit shows a brief skeleton while the API call completes.
-export function DashboardContent() {
+interface Props {
+  fallbackData: DashboardData;
+}
+
+export function DashboardContent({ fallbackData }: Props) {
   const { data } = useSWR<DashboardData>(DASHBOARD_KEY, fetcher, {
+    fallbackData,
     revalidateOnFocus: true,
     dedupingInterval: 30_000,
   });
 
-  // Default to empty shape while loading so the rest of the component
-  // doesn't have to null-check every field. The skeleton state is
-  // visually distinguishable because the playlist list is empty.
-  const watchedUsers = data?.watchedUsers ?? [];
-  const playlists = data?.playlists ?? [];
-  const recentByPlaylist = data?.recentByPlaylist ?? {};
-  const weekByPlaylist = data?.weekByPlaylist ?? {};
-  const errorByPlaylist = data?.errorByPlaylist ?? {};
-  const hasPushSub = data?.hasPushSub ?? true; // suppress amber banner during load
-  const needsReauth = data?.needsReauth ?? false;
-  const cooldownSeconds = data?.cooldownSeconds ?? 0;
+  // data is always defined because of fallbackData.
+  const {
+    watchedUsers,
+    playlists,
+    recentByPlaylist,
+    weekByPlaylist,
+    errorByPlaylist,
+    hasPushSub,
+    needsReauth,
+    cooldownSeconds,
+  } = data!;
 
   const [editing, setEditing] = useState(false);
   // "weekly" (default) = sort by added-this-week count desc; sections

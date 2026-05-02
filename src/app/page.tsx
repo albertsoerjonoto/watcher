@@ -1,12 +1,16 @@
 import { readSessionUserId } from "@/lib/session";
+import { loadDashboardData } from "@/lib/dashboard-data";
 import { DashboardContent } from "@/components/DashboardContent";
 
 export const dynamic = "force-dynamic";
 
-// Thin shell. Auth check is the synchronous HMAC-only `readSessionUserId`
-// (no DB round-trip, no Prisma lazy-migration on cold start), so the
-// function returns in ~5–10ms. Data is loaded client-side.
-export default function DashboardPage() {
+// Auth gate is the synchronous HMAC-only `readSessionUserId` (no DB,
+// no Prisma cold-start migration). The data fetch (loadDashboardData)
+// runs all queries — including the user lookup — in parallel via
+// Promise.all so the cold-start cost is one DB round-trip, not two
+// serial. Returning the data inline as fallbackData means the iPhone
+// PWA cold launch shows full content, never a skeleton flash.
+export default async function DashboardPage() {
   const userId = readSessionUserId();
   if (!userId) {
     return (
@@ -25,5 +29,15 @@ export default function DashboardPage() {
     );
   }
 
-  return <DashboardContent />;
+  const fallbackData = await loadDashboardData(userId);
+  if (!fallbackData) {
+    // Stale cookie pointing at a deleted user.
+    return (
+      <p className="text-neutral-500 dark:text-neutral-400">
+        Sign in required.
+      </p>
+    );
+  }
+
+  return <DashboardContent fallbackData={fallbackData} />;
 }

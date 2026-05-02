@@ -1,14 +1,12 @@
 import { readSessionUserId } from "@/lib/session";
-import { parseFeedFilter } from "@/lib/feed-data";
+import { loadFeedData, parseFeedFilter } from "@/lib/feed-data";
 import { FeedContent } from "@/components/FeedContent";
 
 export const dynamic = "force-dynamic";
 
-// Thin shell. Auth check is the synchronous HMAC-only `readSessionUserId`
-// (no DB round-trip, no Prisma lazy-migration on cold start), so the
-// function returns in ~5–10ms. Data is loaded client-side by FeedContent's
-// SWR with the SWRProvider's localStorage cache.
-export default function FeedPage({
+// Auth gate is sync HMAC, then loadFeedData runs the JOIN. Result is
+// inlined as fallbackData so cold launches never show the skeleton.
+export default async function FeedPage({
   searchParams,
 }: {
   searchParams?: { filter?: string | string[] };
@@ -23,6 +21,7 @@ export default function FeedPage({
   }
 
   const filter = parseFeedFilter(searchParams?.filter);
+  const fallbackData = await loadFeedData(userId, filter);
 
-  return <FeedContent filter={filter} />;
+  return <FeedContent filter={filter} fallbackData={fallbackData} />;
 }

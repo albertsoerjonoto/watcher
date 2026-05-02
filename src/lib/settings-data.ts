@@ -6,7 +6,6 @@
 // never calls Spotify. Serialises any Date values to ISO strings.
 
 import { prisma } from "./db";
-import type { User } from "@prisma/client";
 
 export interface SettingsPlaylistRow {
   id: string;
@@ -39,20 +38,26 @@ export interface SettingsData {
   playlists: SettingsPlaylistRow[];
 }
 
-export async function loadSettingsData(user: User): Promise<SettingsData> {
-  // Parallel fan-out — these were sequential, which forced an extra
-  // round-trip through the DB connection pooler on every Settings nav.
-  const [playlists, watchedUsers, subCount] = await Promise.all([
+// Returns null if the userId doesn't match an existing user.
+export async function loadSettingsData(
+  userId: string,
+): Promise<SettingsData | null> {
+  // Parallel fan-out, including the user lookup, so cold-start latency
+  // is one DB round-trip instead of two serial.
+  const [user, playlists, watchedUsers, subCount] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId } }),
     prisma.playlist.findMany({
-      where: { userId: user.id },
+      where: { userId },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     }),
     prisma.watchedUser.findMany({
-      where: { userId: user.id },
+      where: { userId },
       orderBy: { createdAt: "asc" },
     }),
-    prisma.pushSubscription.count({ where: { userId: user.id } }),
+    prisma.pushSubscription.count({ where: { userId } }),
   ]);
+
+  if (!user) return null;
 
   // Adds-this-week counts per playlist — feeds the "weekly" sort mode
   // when the user picked it in the dashboard preference.

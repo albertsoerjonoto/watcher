@@ -11,14 +11,15 @@
 // SSR fallback in src/app/page.tsx.
 
 import { NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/session";
+import { readSessionUserId } from "@/lib/session";
 import { loadDashboardData } from "@/lib/dashboard-data";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "unauth" }, { status: 401 });
-  const data = await loadDashboardData(user);
+  const userId = readSessionUserId();
+  if (!userId) return NextResponse.json({ error: "unauth" }, { status: 401 });
+  const data = await loadDashboardData(userId);
+  if (!data) return NextResponse.json({ error: "unauth" }, { status: 401 });
   return NextResponse.json(data);
 }

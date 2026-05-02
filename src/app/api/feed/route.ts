@@ -8,17 +8,17 @@
 // from src/components/feed-keys.ts.
 
 import { NextResponse, type NextRequest } from "next/server";
-import { getCurrentUser } from "@/lib/session";
+import { readSessionUserId } from "@/lib/session";
 import { loadFeedData, parseFeedFilter } from "@/lib/feed-data";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "unauth" }, { status: 401 });
+  const userId = readSessionUserId();
+  if (!userId) return NextResponse.json({ error: "unauth" }, { status: 401 });
   const filter = parseFeedFilter(
     request.nextUrl.searchParams.get("filter") ?? undefined,
   );
-  const data = await loadFeedData(user, filter);
+  const data = await loadFeedData(userId, filter);
   return NextResponse.json(data);
 }

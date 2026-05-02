@@ -8,7 +8,6 @@
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
-import type { User } from "@prisma/client";
 
 // Serialisable subset of Playlist for the client. Strings only — no Date
 // objects, no Prisma class instances. Keep this in sync with the
@@ -63,12 +62,19 @@ export interface DashboardData {
   user: { displayName: string | null; spotifyId: string };
 }
 
-export async function loadDashboardData(user: User): Promise<DashboardData> {
+// Returns null if userId doesn't match any user (deleted account but a
+// stale signed cookie still floats around). Caller renders unauth.
+export async function loadDashboardData(
+  userId: string,
+): Promise<DashboardData | null> {
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-  const [watchedUsers, playlists] = await Promise.all([
+  // User lookup runs IN PARALLEL with the rest of the data fan-out so
+  // we don't pay a serial round-trip on the first byte.
+  const [user, watchedUsers, playlists] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId } }),
     prisma.watchedUser.findMany({
-      where: { userId: user.id },
+      where: { userId },
       orderBy: { createdAt: "asc" },
       include: {
         // Pull section-keyed counts via a raw aggregate. Prisma can't
@@ -78,11 +84,13 @@ export async function loadDashboardData(user: User): Promise<DashboardData> {
       },
     }),
     prisma.playlist.findMany({
-      where: { userId: user.id },
+      where: { userId },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
       include: { _count: { select: { tracks: true } } },
     }),
   ]);
+
+  if (!user) return null;
 
   const playlistIds = playlists.map((p) => p.id);
 
@@ -123,7 +131,7 @@ export async function loadDashboardData(user: User): Promise<DashboardData> {
           `)
         : Promise.resolve([]),
       prisma.pushSubscription
-        .count({ where: { userId: user.id } })
+        .count({ where: { userId } })
         .then((n) => n > 0),
     ]);
 
