@@ -19,6 +19,7 @@ are added. Filters out self-additions. PWA-first, deployed on Vercel.
 - `npm run build` — Production build (`prisma generate && next build`). Does NOT run `prisma db push` — see "Schema migrations" below for why.
 - `npm run lint` — ESLint
 - `npm test` — Vitest (includes rate-limit guardrail)
+- `npm run qa:prod` — HTTP smoke test against the deployed app (works without a browser; use this as the QA gate in cloud/mobile sessions)
 - `npm run db:push` — Push schema to DB (manual; only when you have DIRECT_URL set locally)
 - `npm run db:seed` — Seed playlists from playlists.json
 - `npm run poll` — Manual poll (for local testing)
@@ -121,9 +122,11 @@ code" — stop at "I saw it work on https://playlistwatcher.vercel.app".
      -q '.statuses[0].state'
    ```
 
-9. **QA on production via Chrome MCP** — this is the loop's exit
-   condition. Don't trust "the build passed" as proof the feature
-   works; always navigate the live site:
+9. **QA on production** — the loop's exit condition. Don't trust
+   "the build passed" as proof the feature works. Use whichever path
+   matches your environment:
+
+   **Local session (Chrome MCP available):**
    - `tabs_context_mcp { createIfEmpty: true }` to get a tab
    - `navigate` to `https://playlistwatcher.vercel.app/<route>`
    - `screenshot` after a 3–4s wait for SWR to populate
@@ -132,15 +135,49 @@ code" — stop at "I saw it work on https://playlistwatcher.vercel.app".
    - `read_console_messages { onlyErrors: true }` to confirm clean
    - `read_network_requests { urlPattern: "/api/" }` to confirm 200s
 
+   **Cloud / mobile session (no browser MCP):**
+   - `npm run qa:prod` — hits 7 routes, asserts expected status codes
+     and key body strings. Catches the high-impact failures (build
+     crash, lazy-migration broken, unauth path 500'ing) without
+     needing auth or a browser.
+   - For UI-visual or interaction changes that smoke-tests can't
+     cover, lean on type checks + tests + reasoning. State explicitly
+     in the PR body that visual verification is deferred to the user.
+     Don't claim the feature is verified when it isn't.
+
 10. **Iterate.** If QA reveals a bug or the user reports something
     didn't land, go back to step 1 with a new branch. Don't try to fix
     in-place after merge — open a follow-up PR. Each iteration is
     cheap; a bad rushed merge is expensive.
 
+## Cloud / mobile variant
+
+Claude Code Mobile and other cloud sessions run on a fresh GitHub
+clone in a sandbox — no worktree, no Chrome MCP, no local Vercel CLI.
+The loop is the same shape with two differences:
+
+- **Step 7 (merge):** `gh pr merge --squash --delete-branch <num>`
+  works directly. The "main is held by a worktree" failure only
+  happens locally; in a clean sandbox there's no parent worktree to
+  conflict with.
+- **Step 9 (QA):** `npm run qa:prod`. The script (`scripts/qa-prod.ts`)
+  is HTTP-only — no browser, no auth needed. It hits a curated set
+  of routes and asserts the expected unauth response, which is enough
+  to catch the failure modes that have actually bitten this app
+  (build crash, lazy-migration broken, Prisma schema drift). Run it
+  AFTER step 8 reports the prod deploy is green.
+
+If a feature is purely visual (CSS-only, copy change, layout tweak)
+and `npm run qa:prod` is clean, that's as far as autonomous
+verification goes. Be honest in the PR body about what you couldn't
+verify rather than claiming "verified on prod" when you only smoke-
+tested. The user can confirm visuals out of band.
+
 ## Things that bite agents
 
-- `gh pr merge` — fails with "main is already used by worktree". Use
-  the API call shown above.
+- `gh pr merge` — fails locally with "main is already used by
+  worktree". Use the API call shown in step 7. (Doesn't bite cloud
+  sessions — see "Cloud / mobile variant" above.)
 - `prisma db push` during build — fails with "Environment variable not
   found: DATABASE_URL". Vercel's build env doesn't expose runtime env
   vars by default. See "Schema migrations" below.
