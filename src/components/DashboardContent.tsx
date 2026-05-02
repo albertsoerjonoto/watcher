@@ -45,11 +45,11 @@ export function DashboardContent({ fallbackData }: Props) {
 
   const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState(false);
-  // "default" = the user's manual ordering (Edit > Move ↑/↓).
-  // "weekly" = sort by added-this-week count desc, falling back to
-  // default ordering as the tiebreaker. Applies inside each section
-  // independently so Main and Other don't bleed across boundaries.
-  const [sortMode, setSortMode] = useState<"default" | "weekly">("default");
+  // "weekly" (default) = sort by added-this-week count desc; sections
+  // with no weekly activity auto-collapse so the dashboard surfaces
+  // what's moving this week. "manual" = the user's drag-and-drop order
+  // (Edit > Move ↑/↓), with all sections expanded.
+  const [sortMode, setSortMode] = useState<"weekly" | "manual">("weekly");
 
   return (
     <section className="space-y-6">
@@ -135,20 +135,20 @@ export function DashboardContent({ fallbackData }: Props) {
             <button
               type="button"
               onClick={() =>
-                setSortMode(sortMode === "weekly" ? "default" : "weekly")
+                setSortMode(sortMode === "weekly" ? "manual" : "weekly")
               }
               className={
-                sortMode === "weekly"
+                sortMode === "manual"
                   ? "font-medium text-spotify"
                   : "text-neutral-500 hover:text-black dark:text-neutral-400 dark:hover:text-white"
               }
               title={
-                sortMode === "weekly"
-                  ? "Currently sorting by adds this week. Click to restore your manual order."
-                  : "Sort each section by adds-this-week (desc)."
+                sortMode === "manual"
+                  ? "Currently in your manual order. Click to sort by adds-this-week."
+                  : "Sorting by adds-this-week. Click to switch to your manual order."
               }
             >
-              {sortMode === "weekly" ? "Sort: weekly" : "Sort"}
+              {sortMode === "manual" ? "Sort: manual" : "Sort"}
             </button>
             <button
               type="button"

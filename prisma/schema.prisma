@@ -18,6 +18,12 @@ model User {
   refreshToken     String
   tokenExpiresAt   DateTime
   createdAt        DateTime           @default(now())
+  // Section-level notification master switches. AND'd with each
+  // playlist's own `notifyEnabled` flag in src/lib/poll.ts. All default
+  // ON so existing users opt-in to every section automatically.
+  notifyMain       Boolean            @default(true)
+  notifyNew        Boolean            @default(true)
+  notifyOther      Boolean            @default(true)
   playlists        Playlist[]
   pushSubscriptions PushSubscription[]
   deviceTokens     DeviceToken[] // reserved for Phase 2 (APNs)

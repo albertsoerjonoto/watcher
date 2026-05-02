@@ -28,6 +28,20 @@ export interface PollResult {
   error?: string;
 }
 
+// Section-level notification gate. AND'd with the per-playlist
+// `notifyEnabled` flag in pollPlaylist. Pure helper for unit testing
+// — the truth table is small but easy to get wrong if section enums
+// drift (e.g. someone introduces a fourth section), so we test it.
+export function shouldNotifyForSection(
+  user: { notifyMain: boolean; notifyNew: boolean; notifyOther: boolean },
+  section: string,
+): boolean {
+  if (section === "main") return user.notifyMain;
+  if (section === "new") return user.notifyNew;
+  if (section === "other") return user.notifyOther;
+  return false;
+}
+
 async function loadExistingKeys(playlistId: string): Promise<TrackKeyed[]> {
   const rows = await prisma.track.findMany({
     where: { playlistId },
@@ -189,12 +203,10 @@ export async function pollPlaylist(
     }
 
     const isFirstSeed = !playlist.snapshotId;
-    // Track-add notifications fire only for Main/New. Other is a passive
-    // listing — by design we don't push when its tracks change. The
-    // "X just shared a new playlist" notification fires from the sync
-    // endpoint, not from here.
-    const sectionAllowsNotify =
-      playlist.section === "main" || playlist.section === "new";
+    // Section-level notification gate. The user has three master
+    // toggles (notifyMain/New/Other), all defaulting ON. AND'd with
+    // the per-playlist notifyEnabled flag below.
+    const sectionAllowsNotify = shouldNotifyForSection(user, playlist.section);
     let notified = 0;
     console.log(
       `[poll] ${playlist.name}: isFirstSeed=${isFirstSeed} notifyEnabled=${playlist.notifyEnabled} section=${playlist.section} added=${added.length}`,

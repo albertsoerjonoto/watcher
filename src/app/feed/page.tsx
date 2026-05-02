@@ -14,23 +14,48 @@ interface FeedRow {
   addedAt: Date;
   playlistId: string;
   playlistName: string;
+  section: string;
 }
 
-export default async function FeedPage() {
+type Filter = "all" | "main" | "new" | "other";
+
+const FILTER_OPTIONS: { value: Filter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "main", label: "Main" },
+  { value: "new", label: "New" },
+  { value: "other", label: "Other" },
+];
+
+function parseFilter(raw: string | string[] | undefined): Filter {
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  if (v === "main" || v === "new" || v === "other") return v;
+  return "all";
+}
+
+export default async function FeedPage({
+  searchParams,
+}: {
+  searchParams?: { filter?: string | string[] };
+}) {
   const user = await getCurrentUser();
   if (!user) {
     return <p className="text-neutral-500 dark:text-neutral-400">Sign in to view the feed.</p>;
   }
 
+  const filter = parseFilter(searchParams?.filter);
+
   // Only show tracks added to Spotify playlists AFTER the user started
   // watching them, using Spotify's real addedAt timestamp.
+  const sectionClause =
+    filter === "all" ? Prisma.empty : Prisma.sql`AND p."section" = ${filter}`;
   const events = await prisma.$queryRaw<FeedRow[]>(Prisma.sql`
     SELECT t.id, t.title, t.artists, t."albumImageUrl", t."addedAt",
-           p.id AS "playlistId", p.name AS "playlistName"
+           p.id AS "playlistId", p.name AS "playlistName", p."section" AS "section"
     FROM "Track" t
     JOIN "Playlist" p ON t."playlistId" = p.id
     WHERE p."userId" = ${user.id}
       AND t."addedAt" >= p."createdAt"
+      ${sectionClause}
     ORDER BY t."addedAt" DESC
     LIMIT 200
   `);
@@ -44,10 +69,33 @@ export default async function FeedPage() {
 
   return (
     <section className="space-y-6">
-      <h1 className="text-xl font-semibold">Feed</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold">Feed</h1>
+        <nav className="flex items-center gap-1 text-xs">
+          {FILTER_OPTIONS.map((opt) => {
+            const active = opt.value === filter;
+            const href = opt.value === "all" ? "/feed" : `/feed?filter=${opt.value}`;
+            return (
+              <Link
+                key={opt.value}
+                href={href}
+                className={
+                  active
+                    ? "rounded-full bg-spotify/20 px-3 py-1 font-semibold text-spotify"
+                    : "rounded-full px-3 py-1 text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-900"
+                }
+              >
+                {opt.label}
+              </Link>
+            );
+          })}
+        </nav>
+      </div>
       {groups.size === 0 && (
         <p className="text-sm text-neutral-500 dark:text-neutral-400">
-          No tracks yet. Add some playlists from the dashboard.
+          {filter === "all"
+            ? "No tracks yet. Add some playlists from the dashboard."
+            : `No tracks in ${filter}.`}
         </p>
       )}
       {Array.from(groups.entries()).map(([day, items]) => (
