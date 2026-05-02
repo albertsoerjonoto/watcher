@@ -35,8 +35,11 @@ accounts are already logged in.
 3. On the configure screen:
    - **Framework**: Next.js (auto-detected)
    - **Root Directory**: leave as repo root
-   - **Build Command**: leave default (our `package.json` already runs
-     `prisma generate && prisma db push && next build`)
+   - **Build Command**: leave default (`prisma generate && next build`).
+     The build does NOT run `prisma db push` — Vercel doesn't expose
+     `DATABASE_URL` to the build phase by default, so additive
+     migrations are applied at runtime via the Prisma client extension
+     in `src/lib/db.ts`. See `CLAUDE.md` → "Schema migrations".
    - **Production Branch**: leave as `main` (the default).
 4. Expand **Environment Variables** and paste these. Copy everything in
    the left column as the key, everything in the right as the value:
@@ -57,9 +60,11 @@ accounts are already logged in.
    > Leave `SPOTIFY_REDIRECT_URI` and `APP_BASE_URL` with the placeholder
    > for now — you'll update them in step 4 once Vercel assigns a URL.
 
-5. Click **Deploy**. Wait ~90 seconds. The build runs `prisma db push`
-   against Neon so your tables get created automatically on the
-   first deploy.
+5. Click **Deploy**. Wait ~90 seconds. The first deploy will leave
+   your Neon DB empty — run `npm run db:push` once locally (with the
+   Neon `DATABASE_URL` exported in your shell) to create the tables.
+   After that, additive schema changes apply themselves on first
+   request via `src/lib/db.ts` (see `CLAUDE.md` → "Schema migrations").
 
 ---
 
