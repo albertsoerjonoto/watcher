@@ -2,7 +2,6 @@ import Link from "next/link";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { readSessionUserId } from "@/lib/session";
-import { formatDateTimeJakarta } from "@/lib/datetime";
 import { WatchedUserAvatar } from "@/components/WatchedUserAvatar";
 
 export const dynamic = "force-dynamic";
@@ -29,10 +28,11 @@ export default async function PlaylistsIndexPage({
   const orderLabel = order === "asc" ? "Oldest first" : "Newest first";
   const otherLabel = otherOrder === "asc" ? "Oldest first" : "Newest first";
 
-  // Fetch watched users + playlists+tracks in parallel. Watched users
-  // come from their own table so groups with playlists yet to populate
-  // (or all-orphan accounts) still get a header. The user lookup runs
-  // alongside instead of as a serial preamble.
+  // Index page only needs the playlist meta + track COUNTS, not the
+  // tracks themselves. Inlining 2293 tracks balloons the SSR HTML to
+  // ~3.4 MB and pushes FCP to 2-3 seconds even on a fast connection;
+  // tracks live on /playlists/[id] anyway. The count comes from
+  // _count, which Prisma resolves with a single aggregate per row.
   const [watchedUsers, playlists] = await Promise.all([
     prisma.watchedUser.findMany({
       where: { userId },
@@ -41,9 +41,7 @@ export default async function PlaylistsIndexPage({
     prisma.playlist.findMany({
       where: { userId, status: "active" },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-      include: {
-        tracks: { orderBy: { addedAt: order } },
-      },
+      include: { _count: { select: { tracks: true } } },
     }),
   ]);
 
@@ -57,7 +55,7 @@ export default async function PlaylistsIndexPage({
     else playlistsByWatchedUser.set(key, [p]);
   }
 
-  const totalTracks = playlists.reduce((n, p) => n + p.tracks.length, 0);
+  const totalTracks = playlists.reduce((n, p) => n + p._count.tracks, 0);
 
   return (
     <section className="space-y-6">
@@ -97,6 +95,7 @@ export default async function PlaylistsIndexPage({
               />
             }
             playlists={group}
+            order={order}
           />
         );
       })}
@@ -112,6 +111,7 @@ export default async function PlaylistsIndexPage({
               <div className="h-8 w-8 shrink-0 rounded-full bg-neutral-300 dark:bg-neutral-700" />
             }
             playlists={orphans}
+            order={order}
           />
         );
       })()}
@@ -125,18 +125,20 @@ export default async function PlaylistsIndexPage({
   );
 }
 
-type PlaylistWithTracks = Prisma.PlaylistGetPayload<{
-  include: { tracks: true };
+type PlaylistWithCount = Prisma.PlaylistGetPayload<{
+  include: { _count: { select: { tracks: true } } };
 }>;
 
 function WatchedUserGroup({
   label,
   avatar,
   playlists,
+  order,
 }: {
   label: string;
   avatar: React.ReactNode;
-  playlists: PlaylistWithTracks[];
+  playlists: PlaylistWithCount[];
+  order: Order;
 }) {
   return (
     <div className="space-y-3">
@@ -146,89 +148,54 @@ function WatchedUserGroup({
           {label}
         </h2>
       </div>
-      <div className="space-y-3">
+      <div className="space-y-2">
         {playlists.map((p) => (
-          <PlaylistBlock key={p.id} playlist={p} />
+          <PlaylistCard key={p.id} playlist={p} order={order} />
         ))}
       </div>
     </div>
   );
 }
 
-function PlaylistBlock({ playlist }: { playlist: PlaylistWithTracks }) {
+function PlaylistCard({
+  playlist,
+  order,
+}: {
+  playlist: PlaylistWithCount;
+  order: Order;
+}) {
+  const href =
+    order === "desc"
+      ? `/playlists/${playlist.id}?order=desc`
+      : `/playlists/${playlist.id}`;
+  const trackCount = playlist._count.tracks;
   return (
-    <details
-      open
-      className="group rounded-lg border border-neutral-200 dark:border-neutral-800"
+    <Link
+      href={href}
+      className="flex items-center gap-3 rounded-lg border border-neutral-200 p-3 transition-colors hover:bg-neutral-50 dark:border-neutral-800 dark:hover:bg-neutral-900"
     >
-      <summary className="flex cursor-pointer list-none items-center gap-3 p-3">
-        {playlist.imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={playlist.imageUrl}
-            alt=""
-            className="h-10 w-10 shrink-0 rounded object-cover"
-          />
-        ) : (
-          <div className="h-10 w-10 shrink-0 rounded bg-neutral-200 dark:bg-neutral-800" />
-        )}
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{playlist.name}</div>
-          <div className="truncate text-xs text-neutral-500 dark:text-neutral-400">
-            {playlist.tracks.length} tracks
-          </div>
-        </div>
-        <span
-          aria-hidden
-          className="text-xs text-neutral-400 group-open:rotate-90 transition-transform"
-        >
-          ▸
-        </span>
-      </summary>
-      {playlist.tracks.length === 0 ? (
-        <p className="border-t border-neutral-200 p-3 text-xs text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
-          No tracks yet.
-        </p>
+      {playlist.imageUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={playlist.imageUrl}
+          alt=""
+          className="h-10 w-10 shrink-0 rounded object-cover"
+        />
       ) : (
-        <ul className="divide-y divide-neutral-200 border-t border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-          {playlist.tracks.map((t, i) => {
-            let artists: string[] = [];
-            try {
-              artists = JSON.parse(t.artists) as string[];
-            } catch {
-              artists = [];
-            }
-            return (
-              <li
-                key={t.id}
-                className="flex items-center gap-3 p-3 text-sm"
-              >
-                <span className="w-8 text-right text-neutral-500">{i + 1}</span>
-                {t.albumImageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={t.albumImageUrl}
-                    alt=""
-                    className="h-10 w-10 shrink-0 rounded object-cover"
-                  />
-                ) : (
-                  <div className="h-10 w-10 shrink-0 rounded bg-neutral-200 dark:bg-neutral-800" />
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium">{t.title}</div>
-                  <div className="truncate text-xs text-neutral-500 dark:text-neutral-400">
-                    {artists.join(", ")}
-                    {t.album ? ` · ${t.album}` : ""}
-                  </div>
-                </div>
-                <time className="shrink-0 text-xs text-neutral-500">
-                  {formatDateTimeJakarta(t.addedAt)}
-                </time>
-              </li>
-            );
-          })}
-        </ul>
+        <div className="h-10 w-10 shrink-0 rounded bg-neutral-200 dark:bg-neutral-800" />
       )}
-    </details>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-medium">{playlist.name}</div>
+        <div className="truncate text-xs text-neutral-500 dark:text-neutral-400">
+          {trackCount} {trackCount === 1 ? "track" : "tracks"}
+        </div>
+      </div>
+      <span
+        aria-hidden
+        className="text-xs text-neutral-400"
+      >
+        ›
+      </span>
+    </Link>
   );
 }
