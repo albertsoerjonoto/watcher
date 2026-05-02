@@ -34,17 +34,22 @@ async function applyMigrations(): Promise<void> {
   // /api/watched-users/{id}/sync can overwrite with a fresher value
   // without us clobbering it on the next cold start.
   //
-  // displayName=179366 (real spotifyId 31uxjftzzhheqxma2ksjviugtume):
-  // Spotify's Web API /users/{id} returns no `images` array for this
-  // profile even though the web UI shows an avatar. Until we wire a
-  // fallback fetch (spclient or embed) for profile images, backfill
-  // the known CDN URL by hand. We match on the long-form spotifyId
-  // because displayName="179366" is just a backfilled fallback for
-  // privacy-locked users (could collide with other users in theory).
+  // Spotify's Web API /users/{id} returns no `images` array for some
+  // profiles even when the open.spotify.com web UI clearly shows one.
+  // Until we wire a fallback fetch (spclient/embed) for profile
+  // images, backfill known CDN URLs by hand. URLs are the 300x300
+  // profile-pic format (prefix ab6775700000ee85) lifted from each
+  // user's open.spotify.com page. Match on the long-form spotifyId
+  // since displayName can collide.
   await prismaBase.$executeRawUnsafe(`
     UPDATE "WatchedUser"
     SET "imageUrl" = 'https://i.scdn.co/image/ab6775700000ee850baa2d165db57c172e1472ee'
     WHERE "spotifyId" = '31uxjftzzhheqxma2ksjviugtume' AND "imageUrl" IS NULL;
+  `);
+  await prismaBase.$executeRawUnsafe(`
+    UPDATE "WatchedUser"
+    SET "imageUrl" = 'https://i.scdn.co/image/ab6775700000ee8571d746495a9383809b19e06e'
+    WHERE "spotifyId" = '31wczmstawyafwyjfn2lcwwq5is4' AND "imageUrl" IS NULL;
   `);
 }
 
