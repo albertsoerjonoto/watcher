@@ -6,6 +6,7 @@ import { useSWRConfig } from "swr";
 import { PlaylistActions } from "./PlaylistActions";
 import { RetryButton } from "./RetryButton";
 import { SectionPicker, type Section } from "./SectionPicker";
+import { WatchedUserAvatar } from "./WatchedUserAvatar";
 import { DASHBOARD_KEY } from "./dashboard-keys";
 import { formatDateJakarta, formatDateTimeJakarta } from "@/lib/datetime";
 import { MAX_MAIN_PER_WATCHED_USER } from "@/lib/stale";
@@ -540,16 +541,12 @@ function WatchedUserGroup({
     <div className={wrapperClass}>
       <div className="flex items-center justify-between gap-3 px-1">
         <div className="flex min-w-0 items-center gap-3">
-          {watchedUser.imageUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={watchedUser.imageUrl}
-              alt=""
-              className="h-9 w-9 shrink-0 rounded-full object-cover"
-            />
-          ) : (
-            <div className="h-9 w-9 shrink-0 rounded-full bg-neutral-200 dark:bg-neutral-800" />
-          )}
+          <WatchedUserAvatar
+            imageUrl={watchedUser.imageUrl}
+            displayName={watchedUser.displayName}
+            spotifyId={watchedUser.spotifyId}
+            size="md"
+          />
           <h2 className="min-w-0 truncate text-base font-semibold text-neutral-900 dark:text-neutral-100">
             {ownerLabel}
           </h2>
@@ -901,10 +898,10 @@ function PlaylistRowItem({
           <img
             src={p.imageUrl}
             alt=""
-            className="h-14 w-14 shrink-0 rounded object-cover"
+            className="h-12 w-12 shrink-0 rounded object-cover"
           />
         ) : (
-          <div className="h-14 w-14 shrink-0 rounded bg-neutral-200 dark:bg-neutral-800" />
+          <div className="h-12 w-12 shrink-0 rounded bg-neutral-200 dark:bg-neutral-800" />
         )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
