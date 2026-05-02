@@ -113,10 +113,10 @@ export default async function FeedPage({
                     <img
                       src={e.albumImageUrl}
                       alt=""
-                      className="h-10 w-10 shrink-0 rounded object-cover"
+                      className="h-9 w-9 shrink-0 rounded object-cover"
                     />
                   ) : (
-                    <div className="h-10 w-10 shrink-0 rounded bg-neutral-200 dark:bg-neutral-800" />
+                    <div className="h-9 w-9 shrink-0 rounded bg-neutral-200 dark:bg-neutral-800" />
                   )}
                   <div className="flex-1 min-w-0">
                     <div className="truncate font-medium">{e.title}</div>
