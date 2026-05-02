@@ -7,7 +7,7 @@
 // The probe route that caused the April 2026 lockout fired 20+ raw
 // requests in one call and retried on 429; never again.
 //
-// Three layers of protection (cheapest to most durable):
+// Four layers of protection (cheapest to most durable):
 //
 //   1. Per-instance rolling-30s token bucket (in-memory).
 //      BUDGET_MAX_REQUESTS per BUDGET_WINDOW_MS. Stops a single
@@ -25,11 +25,26 @@
 //      refuse every request until it clears. Fail-closed behavior
 //      is the whole point of this module.
 //
-// The three layers compound: you'd have to defeat all of them for a
+//   4. Cross-instance refresh throttle (DB-backed).
+//      Every batch entry point — /api/refresh, /api/cron/poll — must
+//      call `assertCanStartRefreshBatch()` and then
+//      `recordRefreshBatchStarted()` before doing any Spotify work.
+//      This prevents the failure mode that bit us in May 2026: a fresh
+//      browser session with cleared SWR / SW caches re-mounts the
+//      Dashboard, AutoRefresh fires, /api/refresh polls every stale
+//      playlist; the user reloads again, all gates pass because each
+//      individual playlist already-stale check looks fine. Across N
+//      reloads in a short window the aggregate Spotify call count
+//      blows through the budget on the wire even though no single
+//      gate saw it. The batch throttle adds a 60-second floor between
+//      batches that is independent of which client triggered them.
+//
+// The four layers compound: you'd have to defeat all of them for a
 // runaway loop to dig a hole. Defeating the bucket requires burst
 // from one instance; defeating the interval requires crossing the
 // DB write latency; defeating the cooldown requires network access
-// without going through spotifyFetch().
+// without going through spotifyFetch(); defeating the batch throttle
+// requires the DB to lie about lastRefreshBatchAt.
 //
 // History (do not repeat):
 //
@@ -42,11 +57,18 @@
 //     kept firing after an api.spotify.com 429, all hitting the same
 //     per-IP / per-account bucket. Fixed by gating each fallback at
 //     its entry and never "escalating" on 429.
+//   - May 2026 the QA agent took a ~28-minute cooldown by clearing
+//     localStorage / SW / cache between hard reloads of the Dashboard.
+//     Each reload's AutoRefresh saw a fresh JS context, no client-side
+//     debounce, called /api/refresh; the cooldown gate was clear and
+//     individual playlists were stale, so the batch fired every time.
+//     Fixed by adding the cross-instance batch throttle (layer 4).
 
 import { prisma } from "./db";
 
 const COOLDOWN_KEY = "spotify:rateLimitedUntil";
 const LAST_CALL_KEY = "spotify:lastCallAt";
+const REFRESH_BATCH_KEY = "spotify:lastRefreshBatchAt";
 
 // Rolling window for the per-instance bucket. Spotify's documented
 // rule is "a rolling 30-second window" app-wide — we enforce our own
@@ -54,10 +76,11 @@ const LAST_CALL_KEY = "spotify:lastCallAt";
 // undocumented).
 const BUDGET_WINDOW_MS = 30_000;
 
-// Per-instance ceiling. 20/30s × N instances is still well under any
-// plausible dev-mode real limit. Was 60 — lowered after the probe
-// route lockout forced us to assume we don't know the real limit.
-const BUDGET_MAX_REQUESTS = 20;
+// Per-instance ceiling. 10/30s × N instances is still well under any
+// plausible dev-mode real limit. Was 60, then 20; lowered to 10 after
+// May 2026 lockout where multiple Lambdas each came within budget but
+// the aggregate exceeded Spotify's actual ceiling.
+const BUDGET_MAX_REQUESTS = 10;
 
 // Global minimum gap between any two Spotify requests. 500ms means a
 // hard ceiling of 2 calls/sec globally, regardless of how many
@@ -66,6 +89,15 @@ const BUDGET_MAX_REQUESTS = 20;
 // any reasonable rate budget. We'd rather make cron slightly slower
 // than risk another multi-hour block.
 const MIN_INTERVAL_MS = 500;
+
+// Minimum gap between consecutive refresh BATCHES, regardless of
+// caller. A "batch" is an /api/refresh or /api/cron/poll invocation
+// that intends to call Spotify N times. The cooldown + budget gates
+// only see individual calls; this gate sees the entry point. 60s
+// gives any prior batch time to settle and forces "stop hammering"
+// behavior on the SERVER, no matter how many tabs / lambdas / SW
+// reloads the client throws at us.
+const REFRESH_BATCH_MIN_INTERVAL_MS = 60_000;
 
 // In-memory circular buffer of recent call timestamps (per instance).
 const recentCalls: number[] = [];
@@ -342,6 +374,67 @@ export async function spotifyFetch(
     text: () => res.text(),
     json: <T,>() => res.json() as Promise<T>,
   };
+}
+
+// -----------------------------------------------------------------
+// Refresh batch throttle (layer 4, cross-instance, persisted)
+// -----------------------------------------------------------------
+
+/**
+ * Seconds remaining until the next refresh batch is allowed, or 0 if
+ * a batch may start immediately. Cheap DB read; safe to call from any
+ * client-facing endpoint that wants to expose the throttle (e.g.
+ * /api/sync-status). Does NOT itself reserve a batch slot — call
+ * `assertCanStartRefreshBatch()` + `recordRefreshBatchStarted()` for
+ * that.
+ */
+export async function getRefreshBatchThrottleSeconds(): Promise<number> {
+  const last = await readRefreshBatchAt();
+  if (last <= 0) return 0;
+  const ms = REFRESH_BATCH_MIN_INTERVAL_MS - (Date.now() - last);
+  return ms > 0 ? Math.ceil(ms / 1000) : 0;
+}
+
+/**
+ * Throws SpotifyRateLimitError if a refresh batch was started less
+ * than REFRESH_BATCH_MIN_INTERVAL_MS ago. Call from /api/refresh and
+ * /api/cron/poll — this is the layer-4 "no thundering herd" gate.
+ */
+export async function assertCanStartRefreshBatch(): Promise<void> {
+  const remaining = await getRefreshBatchThrottleSeconds();
+  if (remaining > 0) {
+    throw new SpotifyRateLimitError(remaining, "interval");
+  }
+}
+
+/**
+ * Stamp lastRefreshBatchAt = now. Call this AFTER the cooldown gate
+ * passes and BEFORE the first Spotify call so a concurrent caller
+ * sees the new value and bails. Idempotent at the row level.
+ */
+export async function recordRefreshBatchStarted(): Promise<void> {
+  const now = Date.now();
+  try {
+    await prisma.appState.upsert({
+      where: { key: REFRESH_BATCH_KEY },
+      create: { key: REFRESH_BATCH_KEY, value: String(now) },
+      update: { value: String(now) },
+    });
+  } catch {
+    // Non-fatal — the per-instance bucket and cooldown still bound
+    // damage if the DB is briefly unreachable.
+  }
+}
+
+async function readRefreshBatchAt(): Promise<number> {
+  try {
+    const row = await prisma.appState.findUnique({
+      where: { key: REFRESH_BATCH_KEY },
+    });
+    return row ? Number(row.value) || 0 : 0;
+  } catch {
+    return 0;
+  }
 }
 
 /** For tests: clear in-memory state. Does NOT touch the DB. */

@@ -14,7 +14,10 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
 import { prisma } from "@/lib/db";
-import { getCooldownSeconds } from "@/lib/rate-limit";
+import {
+  getCooldownSeconds,
+  getRefreshBatchThrottleSeconds,
+} from "@/lib/rate-limit";
 import { STALE_THRESHOLD_MS } from "@/lib/stale";
 
 export const dynamic = "force-dynamic";
@@ -27,30 +30,37 @@ export async function GET() {
   // can actually refresh via /api/refresh. Other has its own 12h gate
   // on the cron path; counting it here would make the widget perpetually
   // think there's something to refresh when there isn't.
-  const [cooldownSeconds, staleCount, totalActive] = await Promise.all([
-    getCooldownSeconds(),
-    prisma.playlist.count({
-      where: {
-        userId: user.id,
-        status: "active",
-        section: { in: ["main", "new"] },
-        OR: [
-          { lastCheckedAt: null },
-          { lastCheckedAt: { lt: new Date(Date.now() - STALE_THRESHOLD_MS) } },
-        ],
-      },
-    }),
-    prisma.playlist.count({
-      where: {
-        userId: user.id,
-        status: "active",
-        section: { in: ["main", "new"] },
-      },
-    }),
-  ]);
+  const [cooldownSeconds, refreshThrottleSeconds, staleCount, totalActive] =
+    await Promise.all([
+      getCooldownSeconds(),
+      getRefreshBatchThrottleSeconds(),
+      prisma.playlist.count({
+        where: {
+          userId: user.id,
+          status: "active",
+          section: { in: ["main", "new"] },
+          OR: [
+            { lastCheckedAt: null },
+            { lastCheckedAt: { lt: new Date(Date.now() - STALE_THRESHOLD_MS) } },
+          ],
+        },
+      }),
+      prisma.playlist.count({
+        where: {
+          userId: user.id,
+          status: "active",
+          section: { in: ["main", "new"] },
+        },
+      }),
+    ]);
 
   return NextResponse.json({
     cooldownSeconds,
+    // Seconds remaining until /api/refresh would actually start a
+    // batch. Includes the cooldown — if Spotify told us to wait 30 min,
+    // that's longer than the batch throttle, so the client should show
+    // the cooldown reason. AutoRefresh should NOT fire if either is > 0.
+    refreshThrottleSeconds,
     staleCount,
     totalActive,
     staleThresholdMinutes: Math.round(STALE_THRESHOLD_MS / 60_000),
