@@ -3,6 +3,7 @@
 import { useState } from "react";
 import useSWR from "swr";
 import Link from "next/link";
+import { ArrowUpDown, Pencil, Plus } from "lucide-react";
 import { AddPlaylistForm } from "./AddPlaylistForm";
 import { AddWatchedUserForm } from "./AddWatchedUserForm";
 import { InstallHint } from "./InstallHint";
@@ -124,31 +125,34 @@ export function DashboardContent({ fallbackData }: Props) {
                 setShowAdd(!showAdd);
                 if (editing) setEditing(false);
               }}
+              title={showAdd ? "Hide add form" : "Add playlist or watched user"}
+              aria-label="Add"
               className={
                 showAdd
-                  ? "font-medium text-spotify"
+                  ? "text-spotify"
                   : "text-neutral-500 hover:text-black dark:text-neutral-400 dark:hover:text-white"
               }
             >
-              Add
+              <Plus className="h-5 w-5" />
             </button>
             <button
               type="button"
               onClick={() =>
                 setSortMode(sortMode === "weekly" ? "manual" : "weekly")
               }
-              className={
-                sortMode === "manual"
-                  ? "font-medium text-spotify"
-                  : "text-neutral-500 hover:text-black dark:text-neutral-400 dark:hover:text-white"
-              }
               title={
                 sortMode === "manual"
                   ? "Currently in your manual order. Click to sort by adds-this-week."
                   : "Sorting by adds-this-week. Click to switch to your manual order."
               }
+              aria-label="Toggle sort order"
+              className={
+                sortMode === "manual"
+                  ? "text-spotify"
+                  : "text-neutral-500 hover:text-black dark:text-neutral-400 dark:hover:text-white"
+              }
             >
-              {sortMode === "manual" ? "Sort: manual" : "Sort"}
+              <ArrowUpDown className="h-5 w-5" />
             </button>
             <button
               type="button"
@@ -156,13 +160,15 @@ export function DashboardContent({ fallbackData }: Props) {
                 setEditing(!editing);
                 if (showAdd) setShowAdd(false);
               }}
+              title={editing ? "Done editing" : "Edit playlists"}
+              aria-label="Edit"
               className={
                 editing
-                  ? "font-medium text-spotify"
+                  ? "text-spotify"
                   : "text-neutral-500 hover:text-black dark:text-neutral-400 dark:hover:text-white"
               }
             >
-              Edit
+              <Pencil className="h-5 w-5" />
             </button>
           </div>
         }

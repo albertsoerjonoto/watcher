@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSWRConfig } from "swr";
+import { AlertCircle, Check, RefreshCw } from "lucide-react";
 import { PlaylistActions } from "./PlaylistActions";
 import { RetryButton } from "./RetryButton";
 import { SectionPicker, type Section } from "./SectionPicker";
@@ -564,9 +565,23 @@ function WatchedUserGroup({
             type="button"
             onClick={handleSync}
             disabled={syncing}
-            className="rounded border border-neutral-200 px-2 py-0.5 text-neutral-600 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            title={
+              syncing
+                ? "Syncing this user's playlists…"
+                : syncError ?? syncMessage ?? "Sync this user's playlists"
+            }
+            aria-label="Sync this user's playlists"
+            className="text-neutral-600 hover:text-black disabled:opacity-50 dark:text-neutral-300 dark:hover:text-white"
           >
-            {syncing ? "Syncing…" : "Sync"}
+            {syncing ? (
+              <RefreshCw className="h-4 w-4 animate-spin text-spotify" />
+            ) : syncError ? (
+              <AlertCircle className="h-4 w-4 text-red-500" />
+            ) : syncMessage ? (
+              <Check className="h-4 w-4 text-spotify" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
           </button>
           {editing && (
             <button
@@ -738,8 +753,6 @@ function SectionList({
         <SectionHeader
           section={section}
           count={0}
-          mainCap={`0 / ${MAX_MAIN_PER_WATCHED_USER}`}
-          weeklyActiveCount={null}
           collapsible={false}
           open={open}
           onToggle={() => setOpen((v) => !v)}
@@ -756,16 +769,6 @@ function SectionList({
       <SectionHeader
         section={section}
         count={rows.length}
-        mainCap={
-          section === "main"
-            ? `${mainCount} / ${MAX_MAIN_PER_WATCHED_USER}`
-            : null
-        }
-        weeklyActiveCount={
-          sortMode === "weekly" && weeklyActiveCount > 0
-            ? weeklyActiveCount
-            : null
-        }
         collapsible={collapsible}
         open={open}
         onToggle={() => setOpen((v) => !v)}
@@ -808,16 +811,12 @@ function SectionList({
 function SectionHeader({
   section,
   count,
-  mainCap,
-  weeklyActiveCount,
   collapsible,
   open,
   onToggle,
 }: {
   section: Section;
   count: number;
-  mainCap: string | null;
-  weeklyActiveCount: number | null;
   collapsible: boolean;
   open: boolean;
   onToggle: () => void;
@@ -832,16 +831,8 @@ function SectionHeader({
           {count} to triage
         </span>
       )}
-      {section === "other" && count > 0 && (
+      {(section === "main" || section === "other") && count > 0 && (
         <span className="text-[10px] text-neutral-500">({count})</span>
-      )}
-      {mainCap && (
-        <span className="text-[10px] text-neutral-500">{mainCap}</span>
-      )}
-      {weeklyActiveCount !== null && (
-        <span className="text-[10px] text-spotify">
-          {weeklyActiveCount} active this week
-        </span>
       )}
     </div>
   );
@@ -898,10 +889,10 @@ function PlaylistRowItem({
           <img
             src={p.imageUrl}
             alt=""
-            className="h-12 w-12 shrink-0 rounded object-cover"
+            className="h-10 w-10 shrink-0 rounded object-cover"
           />
         ) : (
-          <div className="h-12 w-12 shrink-0 rounded bg-neutral-200 dark:bg-neutral-800" />
+          <div className="h-10 w-10 shrink-0 rounded bg-neutral-200 dark:bg-neutral-800" />
         )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
