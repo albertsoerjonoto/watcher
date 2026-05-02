@@ -6,7 +6,7 @@ Router) + Prisma (SQLite) + Web Push. iOS Safari is supported once the app
 is "Added to Home Screen".
 
 > **Working on this with a Claude agent?** Read
-> [`AUTONOMOUS_LOOP.md`](./AUTONOMOUS_LOOP.md) (universal philosophy) and
+> [`BOOTSTRAP.md`](./BOOTSTRAP.md) (universal philosophy) and
 > [`CLAUDE.md`](./CLAUDE.md) (project-specific commands and guardrails)
 > in that order.
 

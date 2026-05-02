@@ -3,12 +3,13 @@
 Monitors Spotify playlists and sends web push notifications when new tracks
 are added. Filters out self-additions. PWA-first, deployed on Vercel.
 
-> **Read [`AUTONOMOUS_LOOP.md`](./AUTONOMOUS_LOOP.md) first.** It's the
-> standing system prompt for this account: goal-driven execution,
-> continuous iteration, real verification, surgical changes. This file
-> only adds project-specific commands, file map, and rate-limit
-> guardrails on top of that. If anything here contradicts
-> AUTONOMOUS_LOOP.md, AUTONOMOUS_LOOP.md wins.
+> **Read [`BOOTSTRAP.md`](./BOOTSTRAP.md) first.** It's the standing
+> system prompt for this account: goal-driven execution, continuous
+> iteration, real verification, surgical changes, calibration on
+> "100% pass" and "5x speed", continuous-improvement triggers, and
+> stop conditions. This file only adds project-specific commands,
+> file map, and rate-limit guardrails on top of that. If anything
+> here contradicts BOOTSTRAP.md, BOOTSTRAP.md wins.
 
 ## Tech Stack
 
@@ -95,7 +96,7 @@ it works" — saw it.
 This repo expects Claude agents to ship features end-to-end without
 human intervention between code change and verified-on-prod, and to
 **keep iterating after the first pass succeeds** until a stated stop
-condition (see [`AUTONOMOUS_LOOP.md` §"Stop conditions"](./AUTONOMOUS_LOOP.md#stop-conditions-state-which-one-fired)) is met.
+condition (see [`BOOTSTRAP.md` §"Stop conditions"](./BOOTSTRAP.md#stop-conditions-state-which-one-fired)) is met.
 When a user asks for a feature, run the full loop, then look for the
 next improvement and run it again. Don't stop at "I wrote the code" —
 stop at "the criterion is verifiably met on prod and there's no further
@@ -194,12 +195,12 @@ valuable improvement on the table."
 
 11. **Continuous improvement loop.** After QA passes, do NOT declare
     done by default. Scan the post-merge improvement triggers from
-    [`AUTONOMOUS_LOOP.md` §"Continuous-improvement triggers"](./AUTONOMOUS_LOOP.md#continuous-improvement-triggers)
+    [`BOOTSTRAP.md` §"Continuous-improvement triggers"](./BOOTSTRAP.md#continuous-improvement-triggers-after-every-successful-merge)
     — stale docs, dead code, TODOs, security review, design review,
     perf measurement, observability, test coverage gaps, schema
     drift. Each trigger that fires is either a same-session follow-up
     PR (preferred) or a tracked TODO. Only stop when a stop condition
-    from `AUTONOMOUS_LOOP.md` is genuinely met — and state which one.
+    from `BOOTSTRAP.md` is genuinely met — and state which one.
 
 12. **Race-aware before opening a PR.** Multiple agents may be
     working in parallel. Run:

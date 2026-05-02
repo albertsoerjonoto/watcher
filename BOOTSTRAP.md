@@ -191,6 +191,125 @@ what's still on the user. Then stop.
 
 ---
 
+## Calibration — what "100% pass" and "5x speed" actually mean
+
+These goals are easy to overclaim. Use this calibration when the user
+gives you a target like "all tests pass" or "5x faster":
+
+**100% pass** = every test in the project's test runner green, AND
+build green, AND the prod deploy's health check green, AND the
+project's QA scripts (e.g. `qa:prod`, `qa:prod:visual`, server-side
+probe at `/api/qa/probe`) all green. Lint/typecheck warnings aren't
+"tests" but should be zero before merge unless explicitly suppressed.
+
+**5x speed** = a measured before/after on a specific hot path:
+1. Pick the metric (cold-start TTFB, P95 API latency, hydration time,
+   DB query time on the slowest endpoint, bundle size).
+2. Capture the baseline on current main BEFORE editing.
+3. Compute the target (`baseline / 5` for 5x faster).
+4. Iterate — each commit reports the new measurement.
+5. Stop when the target is hit OR you've ruled out further gains on
+   that metric.
+
+If 5x isn't reachable on the current hot path (it's already optimal),
+state that explicitly and either pick a different hot path or a
+different improvement axis (coverage, error handling, edge cases,
+accessibility).
+
+Without a measured baseline, "5x faster" is unreachable because it's
+undefined. Define first, optimize second.
+
+---
+
+## Tool selection — pick the most precise
+
+| Task | Local Claude Code | Cloud / Mobile Claude Code |
+|---|---|---|
+| Edit code | Edit / Write tools | Edit / Write tools |
+| Run tests | Bash → `npm test` | Bash → `npm test` |
+| Stage commit | Bash → `git commit` | Bash → `git commit` |
+| Open PR | Bash → `gh pr create` | Bash → `gh pr create` |
+| Wait for preview | `gh pr view --json statusCheckRollup` | same |
+| Merge | `gh api -X PUT /pulls/N/merge` (worktree) | `gh pr merge --squash --delete-branch` |
+| QA visible UI | Chrome MCP (`mcp__Claude_in_Chrome__*`) | `npm run qa:prod && npm run qa:prod:visual` |
+| QA HTTP | `npm run qa:prod` | `npm run qa:prod` |
+| Vercel ops | Vercel MCP / `vercel` CLI / Chrome MCP on dashboard | Vercel MCP / `vercel` CLI |
+| Supabase ops | Supabase MCP / `supabase` CLI / Chrome MCP on dashboard | Supabase MCP / `supabase` CLI |
+| Native desktop apps | computer-use MCP | n/a |
+
+**Chrome MCP only works on local Claude Code.** Cloud/mobile sessions
+don't have the browser extension — use the headless Playwright path.
+
+**Vercel/Supabase via Chrome MCP** works because the user is already
+logged in. You're driving an authenticated browser, not entering
+passwords. Treat it like driving a CLI: powerful, with the same
+caveats about destructive ops.
+
+---
+
+## Continuous-improvement triggers (after every successful merge)
+
+After QA passes, do not stop by default. Scan for:
+
+1. **Stale docs** — did the diff change behavior described in
+   `README.md` / `ARCHITECTURE.md` / `CLAUDE.md`? Run
+   `/document-release` or open a follow-up.
+2. **Dead code** — variables / imports / branches the new code
+   orphaned.
+3. **TODOs** — the diff might have closed a TODO; remove or update
+   the entry.
+4. **Security** — new endpoints? new user input? Run
+   `/security-review`.
+5. **Design** — new UI? Run `/design-review` (local) or visual QA
+   (cloud).
+6. **Performance** — measure if a hot path changed. Regression →
+   fix. Improvement → capture in the PR body.
+7. **Observability** — does this need a new log line, metric, or
+   alert?
+8. **Test coverage** — happy-path test but no edge-case test? Add
+   the missing tests as a follow-up PR.
+9. **Schema drift** — did the schema change? Lazy migration in
+   place? Verified on prod?
+
+Each trigger that fires becomes either a same-session follow-up PR
+(preferred) or a tracked TODO. Don't drop them on the floor.
+
+---
+
+## Stop conditions (state which one fired)
+
+A. **Coverage saturated.** All tests green, all reasonable QA
+   scripts green, no untested code paths in the diff, prod
+   verified.
+
+B. **Performance saturated.** Hot path measured at ≥ 5× original
+   baseline OR already at theoretical optimum (no measurable
+   wait).
+
+C. **Diminishing returns.** Searched for the next improvement
+   per the triggers above and found nothing valuable. State
+   exactly which triggers you scanned and why each one's payload
+   is empty.
+
+D. **Blocking dependency.** A required external action (user
+   confirmation, third-party API access, infrastructure change
+   the agent can't perform, ambiguous intent) is needed. State
+   the specific blocker and what unblocks it.
+
+If none of A/B/C/D applies, you haven't earned the right to stop.
+
+**NOT permission to skip the loop:**
+- "It's just a one-line change." — Still tests, still PR, still QA.
+- "The user is asleep so they can't merge." — Merge it yourself
+  if authorized; that's what the bootstrap prompt says to do.
+- "CI ran on the PR so I'll trust that." — CI is necessary, not
+  sufficient. QA on prod is what closes the loop.
+- "It's late, batch this with the next change." — No. Hourly
+  commits, one feature per PR, squash merge. Batching is how bugs
+  hide.
+
+---
+
 ## How to use this for your own projects
 
 1. Copy the **PROMPT** block above (between the triple backticks).
