@@ -27,7 +27,12 @@ import { usePathname } from "next/navigation";
 
 interface NavEntry {
   path: string;
+  // ms = click → first paint (skeleton or content). Always populated.
   ms: number;
+  // settledMs = click → no new fetches for SETTLED_QUIET_MS. Populated
+  // asynchronously after the page stops fetching. The actual user-perceived
+  // "ready" time. Null if still settling when read.
+  settledMs: number | null;
   cacheHit: boolean;
   apiCalls: string[];
   at: number;
@@ -42,6 +47,13 @@ declare global {
 let listenerInstalled = false;
 let startTime: number | null = null;
 let startResourceCount = 0;
+
+// Time-to-settled = first window of SETTLED_QUIET_MS during which no
+// new resource fetched after the click. 250ms is short enough to feel
+// instant but long enough to avoid false positives from a single
+// straggling image.
+const SETTLED_QUIET_MS = 250;
+const SETTLED_TIMEOUT_MS = 5_000;
 
 function installClickListener() {
   if (listenerInstalled || typeof document === "undefined") return;
@@ -97,6 +109,7 @@ export function PerfTracker() {
         const entry: NavEntry = {
           path,
           ms,
+          settledMs: null,
           cacheHit,
           apiCalls,
           at: Date.now(),
@@ -109,6 +122,32 @@ export function PerfTracker() {
         // eslint-disable-next-line no-console
         console.log(`[NAV] ${path}: ${ms}ms ${note}`);
         startTime = null;
+
+        // Async: poll resource entries until SETTLED_QUIET_MS passes
+        // with no new fetches. Updates entry.settledMs in place.
+        let lastResourceCount = performance.getEntriesByType("resource").length;
+        let lastChangeAt = performance.now();
+        const settledStart = start;
+        const poll = () => {
+          const now = performance.now();
+          const count = performance.getEntriesByType("resource").length;
+          if (count !== lastResourceCount) {
+            lastResourceCount = count;
+            lastChangeAt = now;
+          }
+          if (now - lastChangeAt >= SETTLED_QUIET_MS) {
+            entry.settledMs = Math.round(lastChangeAt - settledStart);
+            // eslint-disable-next-line no-console
+            console.log(`[NAV-SETTLED] ${path}: ${entry.settledMs}ms`);
+            return;
+          }
+          if (now - settledStart > SETTLED_TIMEOUT_MS) {
+            entry.settledMs = -1; // never settled within timeout
+            return;
+          }
+          setTimeout(poll, 50);
+        };
+        setTimeout(poll, 50);
       });
     });
   }, [pathname]);
