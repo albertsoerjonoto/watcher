@@ -32,6 +32,7 @@ interface Props {
   weekByPlaylist: Record<string, number>;
   errorByPlaylist: Record<string, string>;
   editing?: boolean;
+  sortMode?: "default" | "weekly";
   toolbar?: React.ReactNode;
 }
 
@@ -48,6 +49,60 @@ const SECTION_LABELS: Record<Section, string> = {
   other: "Other",
 };
 
+// Drain the never-polled-yet queue by repeatedly calling
+// /api/playlists/poll-pending until `remaining` is 0. On a 429
+// cooldown, sleep for the reported seconds (capped at 30s per wait so
+// the UI stays interactive) and retry. Caller passes a status callback
+// so the syncMessage can show progress in real time.
+async function drainPendingPolls(
+  onStatus: (status: string) => void,
+): Promise<void> {
+  const MAX_LOOPS = 60; // ~5 min at 5/loop is plenty for typical 50-playlist syncs.
+  let polledTotal = 0;
+  for (let loop = 0; loop < MAX_LOOPS; loop++) {
+    const res = await fetch("/api/playlists/poll-pending", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ limit: 5 }),
+    });
+    const body = (await res.json().catch(() => ({}))) as {
+      polled?: number;
+      remaining?: number;
+      hitRateLimit?: boolean;
+      skipped?: string;
+      cooldownSeconds?: number;
+    };
+    if (body.skipped === "cooldown") {
+      const wait = Math.min(body.cooldownSeconds ?? 5, 30);
+      onStatus(
+        `rate-limited, waiting ${wait}s (${body.remaining ?? "?"} pending)`,
+      );
+      await sleep(wait * 1000);
+      continue;
+    }
+    polledTotal += body.polled ?? 0;
+    const remaining = body.remaining ?? 0;
+    if (remaining === 0) {
+      onStatus(`polled ${polledTotal}`);
+      return;
+    }
+    onStatus(`polled ${polledTotal}, ${remaining} pending`);
+    if (body.hitRateLimit) {
+      // Brief pause to let the rate limit window slide.
+      await sleep(5000);
+    } else {
+      // Brief pause between batches even on success — keeps us under
+      // the rolling-30s budget when there are many playlists.
+      await sleep(800);
+    }
+  }
+  onStatus(`gave up after ${MAX_LOOPS} loops`);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 export function DashboardPlaylistList({
   watchedUsers: initialWatchedUsers,
   playlists: initialPlaylists,
@@ -55,6 +110,7 @@ export function DashboardPlaylistList({
   weekByPlaylist,
   errorByPlaylist,
   editing = false,
+  sortMode = "default",
   toolbar,
 }: Props) {
   const [playlists, setPlaylists] = useState(initialPlaylists);
@@ -85,6 +141,12 @@ export function DashboardPlaylistList({
   // null) collect under the "_orphan" pseudo-key — these are stub rows
   // added via POST /api/playlists that haven't been polled yet, so we
   // don't know their owner.
+  //
+  // sortMode applies INSIDE each section bucket — Main and Other are
+  // sorted independently. "default" preserves the user's manual
+  // ordering (server-provided sortOrder + insertion order). "weekly"
+  // sorts by adds-this-week count desc, with the default order as a
+  // stable tiebreaker for playlists that share a count (including 0).
   const grouped = useMemo(() => {
     const map = new Map<string, SectionBuckets>();
     const ensure = (key: string): SectionBuckets => {
@@ -101,8 +163,25 @@ export function DashboardPlaylistList({
       const sec: Section = (p.section as Section) ?? "main";
       buckets[sec].push(p);
     }
+    if (sortMode === "weekly") {
+      for (const buckets of map.values()) {
+        for (const sec of SECTION_ORDER) {
+          // Capture original index BEFORE sorting so the tiebreaker
+          // preserves the user's manual order for playlists with the
+          // same weekly-add count.
+          const indexed = buckets[sec].map((p, i) => ({ p, i }));
+          indexed.sort((a, b) => {
+            const wa = weekByPlaylist[a.p.id] ?? 0;
+            const wb = weekByPlaylist[b.p.id] ?? 0;
+            if (wb !== wa) return wb - wa; // desc
+            return a.i - b.i;
+          });
+          buckets[sec] = indexed.map(({ p }) => p);
+        }
+      }
+    }
     return map;
-  }, [playlists]);
+  }, [playlists, sortMode, weekByPlaylist]);
 
   // Live main counts per watchedUserId, derived from current state so
   // SectionPicker reflects optimistic moves. Falls back to server-
@@ -389,6 +468,20 @@ function WatchedUserGroup({
       );
       // Revalidate the dashboard so the New section populates immediately.
       mutate(DASHBOARD_KEY);
+
+      // If sync brought in new playlists, drain the first-poll queue
+      // immediately so they don't sit on "Loading…" until the next cron
+      // tick (which is once-per-day on Vercel Hobby). Each batch goes
+      // through the rate-limit chokepoint; on 429 we honor the cooldown
+      // and resume.
+      if (body.added && body.added > 0) {
+        await drainPendingPolls((status) => {
+          setSyncMessage(`${base} — ${status}`);
+        });
+        // Final revalidation after drain so all the populated rows show.
+        mutate(DASHBOARD_KEY);
+        setSyncMessage(`${base} — first-poll done`);
+      }
     } catch (e) {
       setSyncError(e instanceof Error ? e.message : "sync failed");
     } finally {

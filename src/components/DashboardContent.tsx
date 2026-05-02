@@ -44,8 +44,12 @@ export function DashboardContent({ fallbackData }: Props) {
   } = data!;
 
   const [showAdd, setShowAdd] = useState(false);
-  const [showAddWatchedUser, setShowAddWatchedUser] = useState(false);
   const [editing, setEditing] = useState(false);
+  // "default" = the user's manual ordering (Edit > Move ↑/↓).
+  // "weekly" = sort by added-this-week count desc, falling back to
+  // default ordering as the tiebreaker. Applies inside each section
+  // independently so Main and Other don't bleed across boundaries.
+  const [sortMode, setSortMode] = useState<"default" | "weekly">("default");
 
   return (
     <section className="space-y-6">
@@ -96,14 +100,10 @@ export function DashboardContent({ fallbackData }: Props) {
         </div>
       )}
 
-      {showAddWatchedUser && (
-        <div className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
-          <AddWatchedUserForm />
-        </div>
-      )}
-
       {showAdd && (
-        <div className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
+        <div className="space-y-4 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
+          <AddWatchedUserForm />
+          <hr className="border-neutral-200 dark:border-neutral-800" />
           <AddPlaylistForm />
         </div>
       )}
@@ -115,28 +115,13 @@ export function DashboardContent({ fallbackData }: Props) {
         weekByPlaylist={weekByPlaylist}
         errorByPlaylist={errorByPlaylist}
         editing={editing}
+        sortMode={sortMode}
         toolbar={
           <div className="flex items-center gap-3 text-sm">
             <button
               type="button"
               onClick={() => {
-                setShowAddWatchedUser(!showAddWatchedUser);
-                if (showAdd) setShowAdd(false);
-                if (editing) setEditing(false);
-              }}
-              className={
-                showAddWatchedUser
-                  ? "font-medium text-spotify"
-                  : "text-neutral-500 hover:text-black dark:text-neutral-400 dark:hover:text-white"
-              }
-            >
-              Watch user
-            </button>
-            <button
-              type="button"
-              onClick={() => {
                 setShowAdd(!showAdd);
-                if (showAddWatchedUser) setShowAddWatchedUser(false);
                 if (editing) setEditing(false);
               }}
               className={
@@ -145,14 +130,31 @@ export function DashboardContent({ fallbackData }: Props) {
                   : "text-neutral-500 hover:text-black dark:text-neutral-400 dark:hover:text-white"
               }
             >
-              Add playlist
+              Add
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setSortMode(sortMode === "weekly" ? "default" : "weekly")
+              }
+              className={
+                sortMode === "weekly"
+                  ? "font-medium text-spotify"
+                  : "text-neutral-500 hover:text-black dark:text-neutral-400 dark:hover:text-white"
+              }
+              title={
+                sortMode === "weekly"
+                  ? "Currently sorting by adds this week. Click to restore your manual order."
+                  : "Sort each section by adds-this-week (desc)."
+              }
+            >
+              {sortMode === "weekly" ? "Sort: weekly" : "Sort"}
             </button>
             <button
               type="button"
               onClick={() => {
                 setEditing(!editing);
                 if (showAdd) setShowAdd(false);
-                if (showAddWatchedUser) setShowAddWatchedUser(false);
               }}
               className={
                 editing
