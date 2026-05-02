@@ -21,15 +21,17 @@ const FILTER_OPTIONS: { value: FeedFilter; label: string }[] = [
 
 interface Props {
   filter: FeedFilter;
+  fallbackData: FeedData;
 }
 
-export function FeedContent({ filter }: Props) {
-  // No fallbackData — the SSR shell is empty so the server returns in
-  // ~100ms instead of waiting on the 200-row JOIN. SWRProvider hydrates
-  // the in-memory cache from localStorage on construction, so repeat
-  // visits paint with cached data on the first render. First-ever visits
-  // see the empty-feed message briefly while the API call completes.
-  const { data, isLoading } = useSWR<FeedData>(FEED_KEY(filter), fetcher);
+export function FeedContent({ filter, fallbackData }: Props) {
+  // SWR key incorporates the filter so each filter has its own cache slot
+  // — switching filters keeps the others warm. Combined with the
+  // SWRProvider's localStorage persistence, repeat visits to /feed
+  // (any filter) paint instantly from cache, then revalidate.
+  const { data, isLoading } = useSWR<FeedData>(FEED_KEY(filter), fetcher, {
+    fallbackData,
+  });
 
   const events = data?.events ?? [];
 

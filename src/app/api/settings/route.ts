@@ -9,14 +9,15 @@
 // SETTINGS_KEY from src/components/settings-keys.ts.
 
 import { NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/session";
+import { readSessionUserId } from "@/lib/session";
 import { loadSettingsData } from "@/lib/settings-data";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "unauth" }, { status: 401 });
-  const data = await loadSettingsData(user);
+  const userId = readSessionUserId();
+  if (!userId) return NextResponse.json({ error: "unauth" }, { status: 401 });
+  const data = await loadSettingsData(userId);
+  if (!data) return NextResponse.json({ error: "unauth" }, { status: 401 });
   return NextResponse.json(data);
 }

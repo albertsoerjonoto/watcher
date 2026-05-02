@@ -7,7 +7,6 @@
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
-import type { User } from "@prisma/client";
 
 export type FeedFilter = "all" | "main" | "new" | "other";
 
@@ -42,7 +41,7 @@ export function parseFeedFilter(
 }
 
 export async function loadFeedData(
-  user: User,
+  userId: string,
   filter: FeedFilter,
 ): Promise<FeedData> {
   const sectionClause =
@@ -53,7 +52,7 @@ export async function loadFeedData(
            p."imageUrl" AS "playlistImageUrl", p."section" AS "section"
     FROM "Track" t
     JOIN "Playlist" p ON t."playlistId" = p.id
-    WHERE p."userId" = ${user.id}
+    WHERE p."userId" = ${userId}
       AND t."addedAt" >= p."createdAt"
       ${sectionClause}
     ORDER BY t."addedAt" DESC

@@ -1,12 +1,13 @@
 import { readSessionUserId } from "@/lib/session";
+import { loadSettingsData } from "@/lib/settings-data";
 import { SettingsContent } from "@/components/SettingsContent";
 
 export const dynamic = "force-dynamic";
 
-// Thin shell. Auth check is the synchronous HMAC-only `readSessionUserId`
-// (no DB round-trip, no Prisma lazy-migration on cold start), so the
-// function returns in ~5–10ms. Data is loaded client-side.
-export default function SettingsPage() {
+// Auth gate is sync HMAC, then loadSettingsData runs the parallel
+// queries (including the user lookup). Result is inlined as
+// fallbackData so cold launches never show the skeleton.
+export default async function SettingsPage() {
   const userId = readSessionUserId();
   if (!userId)
     return (
@@ -15,5 +16,13 @@ export default function SettingsPage() {
       </p>
     );
 
-  return <SettingsContent />;
+  const fallbackData = await loadSettingsData(userId);
+  if (!fallbackData)
+    return (
+      <p className="text-neutral-500 dark:text-neutral-400">
+        Sign in required.
+      </p>
+    );
+
+  return <SettingsContent fallbackData={fallbackData} />;
 }
