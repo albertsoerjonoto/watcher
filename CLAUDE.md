@@ -20,6 +20,8 @@ are added. Filters out self-additions. PWA-first, deployed on Vercel.
 - `npm run lint` — ESLint
 - `npm test` — Vitest (includes rate-limit guardrail)
 - `npm run qa:prod` — HTTP smoke test against the deployed app (works without a browser; use this as the QA gate in cloud/mobile sessions)
+- `npm run qa:prod:visual` — headless-Chromium DOM assertions on the authenticated UI; auto-skips when `WATCHER_SESSION_COOKIE` isn't set
+- `npm run qa:prod:install` — one-time per environment: fetch the chromium binary used by `qa:prod:visual`
 - `npm run db:push` — Push schema to DB (manual; only when you have DIRECT_URL set locally)
 - `npm run db:seed` — Seed playlists from playlists.json
 - `npm run poll` — Manual poll (for local testing)
@@ -136,14 +138,18 @@ code" — stop at "I saw it work on https://playlistwatcher.vercel.app".
    - `read_network_requests { urlPattern: "/api/" }` to confirm 200s
 
    **Cloud / mobile session (no browser MCP):**
-   - `npm run qa:prod` — hits 7 routes, asserts expected status codes
-     and key body strings. Catches the high-impact failures (build
-     crash, lazy-migration broken, unauth path 500'ing) without
-     needing auth or a browser.
-   - For UI-visual or interaction changes that smoke-tests can't
-     cover, lean on type checks + tests + reasoning. State explicitly
-     in the PR body that visual verification is deferred to the user.
-     Don't claim the feature is verified when it isn't.
+   - `npm run qa:prod` — HTTP smoke test (7 routes, status + key body
+     strings). Catches build crashes, lazy-migration failures, schema
+     drift, unauth path 500s. No auth, no browser.
+   - `npm run qa:prod:visual` — headless Chromium + DOM assertions on
+     the authenticated dashboard and feed. Auto-skips with exit 0 when
+     `WATCHER_SESSION_COOKIE` isn't set, so it's safe to chain after
+     `qa:prod`. When the cookie IS provisioned this catches visual
+     regressions (e.g. the date+time format from PR #75) without a
+     human visiting the site.
+   - For changes that even visual QA can't cover (push notifications,
+     OAuth flows, cron-triggered behavior), state in the PR body what
+     was deferred. Don't overclaim "verified on prod".
 
 10. **Iterate.** If QA reveals a bug or the user reports something
     didn't land, go back to step 1 with a new branch. Don't try to fix
@@ -160,18 +166,32 @@ The loop is the same shape with two differences:
   works directly. The "main is held by a worktree" failure only
   happens locally; in a clean sandbox there's no parent worktree to
   conflict with.
-- **Step 9 (QA):** `npm run qa:prod`. The script (`scripts/qa-prod.ts`)
-  is HTTP-only — no browser, no auth needed. It hits a curated set
-  of routes and asserts the expected unauth response, which is enough
-  to catch the failure modes that have actually bitten this app
-  (build crash, lazy-migration broken, Prisma schema drift). Run it
-  AFTER step 8 reports the prod deploy is green.
+- **Step 9 (QA):** chain two scripts, both run AFTER step 8 reports
+  the prod deploy is green:
+  ```
+  npm run qa:prod && npm run qa:prod:visual
+  ```
+  `qa:prod` is HTTP-only — no browser, no auth needed. It hits a
+  curated set of routes and asserts the expected unauth response,
+  which is enough to catch the failure modes that have actually
+  bitten this app (build crash, lazy-migration broken, Prisma schema
+  drift). `qa:prod:visual` adds authenticated DOM assertions via
+  headless Chromium when `WATCHER_SESSION_COOKIE` is set; otherwise
+  it self-skips with exit 0, so the chain stays green either way.
 
-If a feature is purely visual (CSS-only, copy change, layout tweak)
-and `npm run qa:prod` is clean, that's as far as autonomous
-verification goes. Be honest in the PR body about what you couldn't
-verify rather than claiming "verified on prod" when you only smoke-
-tested. The user can confirm visuals out of band.
+  First run only on a fresh sandbox: `npm run qa:prod:install` to
+  fetch the chromium binary (~92 MB).
+
+  To enable visual QA, paste the `spw_session` cookie from a
+  logged-in browser into `WATCHER_SESSION_COOKIE` (env var, repo
+  secret, etc.). Cookies are HMAC-signed with a 30-day TTL — refresh
+  monthly. See `scripts/qa-prod-visual.ts` header for the exact
+  extraction steps.
+
+If a feature falls outside what either script covers (push
+notifications, OAuth flows, cron behavior), be honest in the PR
+body about what's unverified rather than overclaiming "verified on
+prod". The user can confirm out of band.
 
 ## Things that bite agents
 
