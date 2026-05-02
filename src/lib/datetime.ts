@@ -51,6 +51,17 @@ export function formatDateTimeJakarta(
   return dateTimeFmt.format(date).replace(",", "").replace(":", ".");
 }
 
+// "HH.MM" in Jakarta TZ — used to show registration time alongside (or
+// underneath) a date that's already grouped at a coarser level.
+export function formatTimeJakarta(
+  d: Date | string | null | undefined,
+): string {
+  if (!d) return "—";
+  const date = d instanceof Date ? d : new Date(d);
+  if (isNaN(date.getTime())) return "—";
+  return timeFmt.format(date).replace(":", ".");
+}
+
 // YYYY-MM-DD in Jakarta TZ — used as a stable group key in the feed.
 export function dayKeyJakarta(d: Date | string): string {
   const date = d instanceof Date ? d : new Date(d);

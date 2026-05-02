@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   formatDateJakarta,
   formatDateTimeJakarta,
+  formatTimeJakarta,
   dayKeyJakarta,
 } from "./datetime";
 
@@ -41,6 +42,26 @@ describe("formatDateTimeJakarta", () => {
 
   it("returns em dash for null", () => {
     expect(formatDateTimeJakarta(null)).toBe("\u2014");
+  });
+});
+
+describe("formatTimeJakarta", () => {
+  it("formats time with a dot separator", () => {
+    // 2026-04-30T07:33:00Z = 2026-04-30 14:33 Jakarta
+    expect(formatTimeJakarta("2026-04-30T07:33:00Z")).toBe("14.33");
+  });
+
+  it("zero-pads hours and minutes", () => {
+    // 2026-04-30T01:05:00Z = 2026-04-30 08:05 Jakarta
+    expect(formatTimeJakarta("2026-04-30T01:05:00Z")).toBe("08.05");
+  });
+
+  it("returns em dash for null", () => {
+    expect(formatTimeJakarta(null)).toBe("—");
+  });
+
+  it("returns em dash for invalid date string", () => {
+    expect(formatTimeJakarta("not-a-date")).toBe("—");
   });
 });
 

@@ -9,7 +9,11 @@ import { RetryButton } from "./RetryButton";
 import { SectionPicker, type Section } from "./SectionPicker";
 import { WatchedUserAvatar } from "./WatchedUserAvatar";
 import { DASHBOARD_KEY } from "./dashboard-keys";
-import { formatDateJakarta, formatRelativeJakarta } from "@/lib/datetime";
+import {
+  formatDateJakarta,
+  formatRelativeJakarta,
+  formatTimeJakarta,
+} from "@/lib/datetime";
 import { MAX_MAIN_PER_WATCHED_USER } from "@/lib/stale";
 
 type SortMode = "weekly" | "manual";
@@ -992,8 +996,9 @@ function PlaylistRowItem({
                     {artists.join(", ")}
                   </span>
                 </span>
-                <time className="shrink-0 text-neutral-500 dark:text-neutral-600">
+                <time className="shrink-0 text-neutral-500 tabular-nums dark:text-neutral-600">
                   {formatDateJakarta(t.addedAt)}
+                  <span className="ml-2">{formatTimeJakarta(t.addedAt)}</span>
                 </time>
               </li>
             );
