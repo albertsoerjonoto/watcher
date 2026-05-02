@@ -6,7 +6,11 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { pollAllForUser } from "@/lib/poll";
-import { getCooldownSeconds } from "@/lib/rate-limit";
+import {
+  getCooldownSeconds,
+  getRefreshBatchThrottleSeconds,
+  recordRefreshBatchStarted,
+} from "@/lib/rate-limit";
 import { syncWatchedUser } from "@/lib/watched-user-sync";
 import { SpotifyError } from "@/lib/spotify";
 
@@ -60,6 +64,20 @@ export async function GET(request: Request) {
       cooldownSeconds: cooldown,
     });
   }
+  // Refresh-batch throttle: if a user-triggered /api/refresh just ran
+  // (within REFRESH_BATCH_MIN_INTERVAL_MS), the cron tick waits its
+  // turn. Cron and the user share the same Spotify bucket — racing
+  // both into the same 30-second window is exactly what we're trying
+  // to avoid. The next cron tick will pick up where we left off.
+  const batchThrottle = await getRefreshBatchThrottleSeconds();
+  if (batchThrottle > 0) {
+    return NextResponse.json({
+      ok: true,
+      skipped: "throttled",
+      retryAfterSeconds: batchThrottle,
+    });
+  }
+  await recordRefreshBatchStarted();
   const users = await prisma.user.findMany();
   const out: Record<string, unknown> = {};
   for (const u of users) {

@@ -23,13 +23,15 @@ type SyncState =
   | { kind: "rateLimited"; secondsRemaining: number };
 
 interface RefreshResponse {
-  skipped?: "cooldown" | "fresh";
+  skipped?: "cooldown" | "fresh" | "throttled";
   cooldownSeconds?: number;
+  retryAfterSeconds?: number;
   results?: { newTracks: number; error?: string }[];
 }
 
 interface StatusResponse {
   cooldownSeconds: number;
+  refreshThrottleSeconds: number;
   staleCount: number;
   totalActive: number;
   staleThresholdMinutes: number;
@@ -66,6 +68,14 @@ export function AutoRefresh() {
         });
         return;
       }
+      // Server-enforced batch throttle: another instance / tab / cron
+      // tick just polled and we'd be racing into the same Spotify
+      // 30-second window. Treat it as "fresh" so the user sees a
+      // checkmark, not a confusing alert.
+      if (status.refreshThrottleSeconds > 0 && !force) {
+        setState({ kind: "fresh" });
+        return;
+      }
       if (status.staleCount === 0 && !force) {
         setState({ kind: "fresh" });
         return;
@@ -85,7 +95,9 @@ export function AutoRefresh() {
         });
         return;
       }
-      if (body.skipped === "fresh") {
+      if (body.skipped === "throttled" || body.skipped === "fresh") {
+        // "throttled" = server saw another batch < 60s ago; treat as
+        // fresh so the user gets a happy checkmark, not a warning.
         setState({ kind: "fresh" });
         return;
       }

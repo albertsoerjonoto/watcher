@@ -1,26 +1,38 @@
 // POST /api/refresh
 //
-// Polls active playlists for the signed-in user, BUT only those whose
-// lastCheckedAt is older than STALE_THRESHOLD_MS, AND only if we are
-// not currently inside a persisted 429 cooldown. Both gates are cheap
-// DB reads — we never pay a Spotify round-trip just to decide nothing
-// needs refreshing.
+// Polls active playlists for the signed-in user, BUT only once per
+// REFRESH_BATCH_MIN_INTERVAL_MS globally (across every instance and
+// caller), and only if we are not currently inside a persisted 429
+// cooldown. Both gates are cheap DB reads — we never pay a Spotify
+// round-trip just to decide nothing needs refreshing.
 //
-// Why the double gate (post-mortem):
+// Why the triple gate (post-mortem):
 //
-//   Before this fix, opening the dashboard fired /api/refresh, which
+//   v1 (April 2026): opening the dashboard fired /api/refresh, which
 //   called pollAllForUser on every active playlist even if we'd polled
 //   them 5 seconds ago. Combined with AutoRefresh firing on every
 //   tab-focus + visibilitychange, a single afternoon of iteration
 //   burned through Spotify's rolling-30s budget and earned us a
-//   ~12-hour 429 block. See src/lib/rate-limit.ts for the full
-//   post-mortem.
+//   ~12-hour 429 block. Fix: add cooldown gate + per-playlist
+//   STALE_THRESHOLD_MS gate.
+//
+//   v2 (May 2026): a QA agent took a ~28-minute cooldown by clearing
+//   localStorage / SW / cache between hard reloads of the Dashboard.
+//   Each fresh JS context's AutoRefresh thought it was the first
+//   debounced runner and called /api/refresh; the cooldown gate was
+//   clear and individual playlists were stale, so the batch fired
+//   every time. Fix: assertCanStartRefreshBatch() — a SERVER-enforced
+//   60-second floor between batches no client can bypass.
 
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
 import { pollPlaylist } from "@/lib/poll";
 import { prisma } from "@/lib/db";
-import { getCooldownSeconds } from "@/lib/rate-limit";
+import {
+  getCooldownSeconds,
+  getRefreshBatchThrottleSeconds,
+  recordRefreshBatchStarted,
+} from "@/lib/rate-limit";
 import { STALE_THRESHOLD_MS } from "@/lib/stale";
 import type { User } from "@prisma/client";
 
@@ -43,7 +55,23 @@ export async function POST() {
     });
   }
 
-  // Gate 2: staleness. A playlist freshly polled 5 seconds ago doesn't
+  // Gate 2: cross-instance batch throttle. Even if every individual
+  // playlist looks stale, refuse to start another batch within
+  // REFRESH_BATCH_MIN_INTERVAL_MS of the previous one. This is the
+  // SERVER-side enforcement that makes "won't happen again" actually
+  // hold; clients (AutoRefresh, hand-typed curl, the browser back
+  // button) all hit this gate, none can bypass.
+  const throttleSeconds = await getRefreshBatchThrottleSeconds();
+  if (throttleSeconds > 0) {
+    return NextResponse.json({
+      ok: true,
+      skipped: "throttled",
+      retryAfterSeconds: throttleSeconds,
+      results: [],
+    });
+  }
+
+  // Gate 3: staleness. A playlist freshly polled 5 seconds ago doesn't
   // need re-polling; skip it. The user can still force a full refresh
   // via the per-playlist Retry button or by waiting for the next tick.
   //
@@ -72,6 +100,11 @@ export async function POST() {
   if (stale.length === 0) {
     return NextResponse.json({ ok: true, skipped: "fresh", results: [] });
   }
+
+  // We're committed to a Spotify batch. Stamp the throttle BEFORE the
+  // first call so a concurrent caller (different lambda, second tab)
+  // sees it and bails out.
+  await recordRefreshBatchStarted();
 
   // Sequential to keep rate-limit pressure sane, same as pollAllForUser.
   let u: User = user;
