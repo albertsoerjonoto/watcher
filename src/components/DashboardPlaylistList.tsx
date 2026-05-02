@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-type SortMode = "weekly" | "manual";
 import Link from "next/link";
 import { useSWRConfig } from "swr";
 import { PlaylistActions } from "./PlaylistActions";
@@ -10,6 +9,8 @@ import { SectionPicker, type Section } from "./SectionPicker";
 import { DASHBOARD_KEY } from "./dashboard-keys";
 import { formatDateJakarta, formatDateTimeJakarta } from "@/lib/datetime";
 import { MAX_MAIN_PER_WATCHED_USER } from "@/lib/stale";
+
+type SortMode = "weekly" | "manual";
 
 // Re-export the shared types so existing imports
 // (`import { type PlaylistRow } from "./DashboardPlaylistList"`) keep
