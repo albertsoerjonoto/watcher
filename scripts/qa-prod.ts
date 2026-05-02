@@ -101,6 +101,38 @@ async function runCheck(c: Check): Promise<{ ok: boolean; detail: string }> {
   return { ok: true, detail: `${res.status}` };
 }
 
+interface ProbeResponse {
+  status: "ok" | "warn" | "fail";
+  checks: Array<{ name: string; status: "ok" | "warn" | "fail"; detail: string }>;
+  counts: Record<string, number>;
+  generatedAt: string;
+}
+
+async function runProbe(): Promise<{ ok: boolean; warns: number; fails: number }> {
+  console.log(`\n[qa-prod] /api/qa/probe`);
+  let res: Response;
+  try {
+    res = await fetch(BASE + "/api/qa/probe");
+  } catch (e) {
+    console.log(`  ✗ fetch error: ${e instanceof Error ? e.message : String(e)}`);
+    return { ok: false, warns: 0, fails: 1 };
+  }
+  if (res.status !== 200) {
+    console.log(`  ✗ status ${res.status} (expected 200)`);
+    return { ok: false, warns: 0, fails: 1 };
+  }
+  const body = (await res.json()) as ProbeResponse;
+  let fails = 0;
+  let warns = 0;
+  for (const c of body.checks) {
+    const symbol = c.status === "ok" ? "✓" : c.status === "warn" ? "!" : "✗";
+    console.log(`  ${symbol} ${c.name.padEnd(28)} ${c.detail}`);
+    if (c.status === "fail") fails++;
+    if (c.status === "warn") warns++;
+  }
+  return { ok: fails === 0, warns, fails };
+}
+
 async function main() {
   console.log(`[qa-prod] ${BASE}`);
   let failed = 0;
@@ -110,11 +142,16 @@ async function main() {
     console.log(`  ${symbol} ${c.path.padEnd(20)} ${detail}  — ${c.description}`);
     if (!ok) failed++;
   }
-  if (failed > 0) {
-    console.log(`\nFAILED: ${failed} of ${checks.length} checks`);
+  const probe = await runProbe();
+  if (failed > 0 || !probe.ok) {
+    console.log(
+      `\nFAILED: ${failed} of ${checks.length} HTTP checks; probe fails=${probe.fails}, warns=${probe.warns}`,
+    );
     process.exit(1);
   }
-  console.log(`\n${checks.length}/${checks.length} checks passed`);
+  console.log(
+    `\n${checks.length}/${checks.length} HTTP checks passed; probe ok (warns=${probe.warns})`,
+  );
 }
 
 main();
