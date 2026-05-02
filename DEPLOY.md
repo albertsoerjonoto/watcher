@@ -41,24 +41,31 @@ accounts are already logged in.
      migrations are applied at runtime via the Prisma client extension
      in `src/lib/db.ts`. See `CLAUDE.md` → "Schema migrations".
    - **Production Branch**: leave as `main` (the default).
-4. Expand **Environment Variables** and paste these. Copy everything in
-   the left column as the key, everything in the right as the value:
+4. Expand **Environment Variables** and set the following keys. Use
+   the values you generate yourself — do NOT commit any of them back
+   to this file:
 
-   | Key | Value |
+   | Key | Source / how to generate |
    |---|---|
-   | `SPOTIFY_CLIENT_ID` | `323de6c6b63d458da2c73dfc5b5ee18f` |
+   | `SPOTIFY_CLIENT_ID` | from your Spotify app dashboard |
    | `SPOTIFY_REDIRECT_URI` | `https://<will-fill-after-deploy>/api/auth/callback` |
    | `APP_BASE_URL` | `https://<will-fill-after-deploy>` |
-   | `SESSION_SECRET` | `T7T9YFabQiqjE8gDK0DC74ZUmdFg-IKKKMc-FInmVHA` |
-   | `DATABASE_URL` | *(Neon connection string from step 1)* |
-   | `CRON_SECRET` | `1Xabh5Se7O5tFirfC6joj56u4OjYQY0GFD5wEOP9XFk` |
-   | `VAPID_PUBLIC_KEY` | `BNHedM6mhEotKGY60tb_4qJZ5sbd_8NE0HKe0epaTsSwy1qgDUJDujr58TjmEpWJg1ZxlVur3LckvP9VniYJhlA` |
-   | `VAPID_PRIVATE_KEY` | `cTu0SBHSkU1pS1eSIokMQzkhcrZGkGpn4SplDi_4FTE` |
+   | `SESSION_SECRET` | `openssl rand -base64 32` |
+   | `DATABASE_URL` | Neon connection string from step 1 |
+   | `CRON_SECRET` | `openssl rand -base64 32` |
+   | `VAPID_PUBLIC_KEY` | run `npx web-push generate-vapid-keys` and paste the public key |
+   | `VAPID_PRIVATE_KEY` | from the same `generate-vapid-keys` run |
    | `VAPID_SUBJECT` | `mailto:your-email@example.com` |
-   | `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | `BNHedM6mhEotKGY60tb_4qJZ5sbd_8NE0HKe0epaTsSwy1qgDUJDujr58TjmEpWJg1ZxlVur3LckvP9VniYJhlA` |
+   | `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | same value as `VAPID_PUBLIC_KEY` |
 
    > Leave `SPOTIFY_REDIRECT_URI` and `APP_BASE_URL` with the placeholder
    > for now — you'll update them in step 4 once Vercel assigns a URL.
+
+   > **Security note.** Earlier revisions of this file pasted the live
+   > production values for `SESSION_SECRET`, `CRON_SECRET`, and the
+   > VAPID keypair directly in the table. They're in this repo's git
+   > history. If those are still your active production values, rotate
+   > all three before considering them private. See `SECURITY.md`.
 
 5. Click **Deploy**. Wait ~90 seconds. The first deploy will leave
    your Neon DB empty — run `npm run db:push` once locally (with the
