@@ -57,6 +57,7 @@ export async function POST(
       truncated: result.truncated,
       notificationsSent: result.notificationsSent,
       privacyLocked: result.privacyLocked,
+      discoveryVia: result.discoveryVia,
     });
   } catch (e) {
     if (e instanceof SpotifyError) {

@@ -96,6 +96,8 @@ export async function POST(request: Request) {
       added: result.added,
       total: result.total,
       truncated: result.truncated,
+      privacyLocked: result.privacyLocked,
+      discoveryVia: result.discoveryVia,
     });
   } catch (e) {
     // Surface the Spotify status code so the client can render the

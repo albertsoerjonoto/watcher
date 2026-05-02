@@ -12,6 +12,7 @@ import {
   fetchUserProfile,
   fetchUserPublicPlaylists,
   SpotifyError,
+  type DiscoveryVia,
   type SpotifyUserPlaylistItem,
   type SpotifyUserProfile,
 } from "./spotify";
@@ -29,6 +30,11 @@ export interface SyncResult {
   // tracked playlists for this user keep being polled normally —
   // sync just can't discover new ones from the user's profile.
   privacyLocked?: boolean;
+  // Which discovery tier produced these playlists. `none` when all
+  // five tiers returned zero (genuinely privacy-locked or offline).
+  // The dashboard renders different copy for `search` (partial,
+  // auto-retries) vs `none` (manual-paste fallback offered).
+  discoveryVia?: DiscoveryVia;
 }
 
 /**
@@ -99,8 +105,20 @@ export async function syncWatchedUser(
   // the UI can render a soft warning instead of a hard error.
   let fetched: Awaited<ReturnType<typeof fetchUserPublicPlaylists>> | null = null;
   let privacyLocked = false;
+  // Best-known display name for this user — feeds Tier 5 (search-API
+  // enumeration). Profile fetch above may have been 403'd, in which
+  // case `profile.display_name` is undefined; fall back to the existing
+  // WatchedUser row's displayName (backfilled from playlist owner data
+  // on prior polls). Either is fine; null/empty just means Tier 5
+  // skips silently.
+  const searchHintDisplayName =
+    profile.display_name ?? existing?.displayName ?? null;
   try {
-    fetched = await fetchUserPublicPlaylists(user, spotifyUserId);
+    fetched = await fetchUserPublicPlaylists(
+      user,
+      spotifyUserId,
+      searchHintDisplayName,
+    );
     user = fetched.user;
   } catch (e) {
     if (e instanceof SpotifyError && e.status === 404) {
@@ -254,6 +272,12 @@ export async function syncWatchedUser(
     where: { userId: user.id, watchedUserId: watchedUser.id },
   });
 
+  // discoveryVia: surface which tier produced the playlists (or `none`
+  // if privacy-locked / nothing found). Used by the dashboard to show
+  // "Synced via search — coverage may be partial" vs the legacy
+  // privacy-locked copy.
+  const discoveryVia: DiscoveryVia = fetched?.discoveryVia ?? "none";
+
   return {
     watchedUser,
     added: newItems.length,
@@ -261,5 +285,6 @@ export async function syncWatchedUser(
     truncated: fetched?.truncated ?? false,
     notificationsSent,
     privacyLocked,
+    discoveryVia,
   };
 }

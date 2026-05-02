@@ -1032,25 +1032,56 @@ const MAX_USER_PLAYLIST_PAGES = 4;
  *     player itself uses BOTH endpoints; the subroute may have different
  *     access semantics than the parent (some users have their profile
  *     metadata locked but their playlists list still readable here).
+ *   - Tier 5: Spotify catalog search (/v1/search?type=playlist) with the
+ *     app token, filtered down to playlists whose `owner.id` matches.
+ *     Catalog search is conceptually a different surface — it's not
+ *     scoped to /users/{id}/* and respects no per-user privacy setting,
+ *     because it indexes the public playlist catalog. Coverage is
+ *     partial (Spotify ranks by global popularity, not by owner) but
+ *     for users with at least one indexed playlist it discovers the
+ *     rest by owner-match. Only fires when a `displayName` is
+ *     available — without one there's no useful search query.
  *
  * 429s anywhere in the chain are fatal (do NOT escalate to next tier —
  * they all share Spotify's per-IP / per-account bucket). 403/404 from a
  * tier triggers escalation.
+ *
+ * `discoveryVia` in the result indicates which tier produced the
+ * playlists (`api`, `app-token`, `spclient`, `spclient-playlists`,
+ * `search`, or `none` if all returned zero). Callers persist this so
+ * the dashboard can render an accurate status.
  */
+export type DiscoveryVia =
+  | "api"
+  | "app-token"
+  | "spclient"
+  | "spclient-playlists"
+  | "search"
+  | "none";
+
 export async function fetchUserPublicPlaylists(
   userIn: User,
   spotifyUserId: string,
+  displayName?: string | null,
 ): Promise<{
   user: User;
   playlists: SpotifyUserPlaylistItem[];
   truncated: boolean;
+  discoveryVia: DiscoveryVia;
 }> {
   let user = userIn;
   let firstTierError: SpotifyError | null = null;
   // Per-tier outcome strings for the final error message + telemetry.
   // Each tier writes its own slot; "skipped" means we never tried it
-  // (e.g. tier 2 when SPOTIFY_CLIENT_SECRET is missing).
-  const attempted: { t1?: string; t2?: string; t3?: string; t4?: string } = {};
+  // (e.g. tier 2 when SPOTIFY_CLIENT_SECRET is missing, or tier 5 when
+  // we don't have a displayName to query with).
+  const attempted: {
+    t1?: string;
+    t2?: string;
+    t3?: string;
+    t4?: string;
+    t5?: string;
+  } = {};
 
   // Tier 1: user OAuth token. The vast majority of watched users go
   // through this path successfully.
@@ -1060,7 +1091,7 @@ export async function fetchUserPublicPlaylists(
       spotifyUserId,
     );
     attempted.t1 = `ok(${result.playlists.length})`;
-    return result;
+    return { ...result, discoveryVia: "api" };
   } catch (e) {
     if (e instanceof SpotifyError && (e.status === 403 || e.status === 404)) {
       firstTierError = e;
@@ -1087,7 +1118,12 @@ export async function fetchUserPublicPlaylists(
     console.warn(
       `[fetchUserPublicPlaylists] tier 2 (app token) returned ${appResult.playlists.length} for ${spotifyUserId} after tier 1 returned ${firstTierError?.status}`,
     );
-    return { user, playlists: appResult.playlists, truncated: appResult.truncated };
+    return {
+      user,
+      playlists: appResult.playlists,
+      truncated: appResult.truncated,
+      discoveryVia: "app-token",
+    };
   }
 
   // Tier 3: spclient parent profile endpoint with the SAME user OAuth
@@ -1117,6 +1153,7 @@ export async function fetchUserPublicPlaylists(
         user,
         playlists: spclientResult.playlists,
         truncated: spclientResult.truncated,
+        discoveryVia: "spclient",
       };
     }
   } else {
@@ -1142,10 +1179,40 @@ export async function fetchUserPublicPlaylists(
         user,
         playlists: spclientPlaylistsResult.playlists,
         truncated: spclientPlaylistsResult.truncated,
+        discoveryVia: "spclient-playlists",
       };
     }
   } else {
     attempted.t4 = "blocked";
+  }
+
+  // Tier 5: Spotify catalog search (/v1/search?type=playlist) with the
+  // app token. Conceptually a different surface — it indexes the
+  // public playlist catalog and is not gated by per-user privacy
+  // settings. Coverage is partial (Spotify ranks by global popularity)
+  // but for users with at least one indexed playlist we can find the
+  // others by filtering search results to `owner.id === spotifyUserId`.
+  // Skips silently when displayName is missing or too short to make
+  // a useful query.
+  const searchResult = await fetchUserPlaylistsViaSearch(
+    spotifyUserId,
+    displayName,
+  );
+  if (searchResult === null) {
+    attempted.t5 = "skipped";
+  } else {
+    attempted.t5 = `ok(${searchResult.playlists.length})`;
+    if (searchResult.playlists.length > 0) {
+      console.warn(
+        `[fetchUserPublicPlaylists] tier 5 (search) returned ${searchResult.playlists.length} for ${spotifyUserId} (displayName=${JSON.stringify(displayName)}) after tiers 1-4 failed`,
+      );
+      return {
+        user,
+        playlists: searchResult.playlists,
+        truncated: searchResult.truncated,
+        discoveryVia: "search",
+      };
+    }
   }
 
   // App-token reachable but found 0 playlists — accept as truth (the
@@ -1154,7 +1221,12 @@ export async function fetchUserPublicPlaylists(
     console.warn(
       `[fetchUserPublicPlaylists] tier 2 reachable but 0 playlists for ${spotifyUserId} — treating as empty (attempted=${JSON.stringify(attempted)})`,
     );
-    return { user, playlists: appResult.playlists, truncated: appResult.truncated };
+    return {
+      user,
+      playlists: appResult.playlists,
+      truncated: appResult.truncated,
+      discoveryVia: "app-token",
+    };
   }
 
   // All tiers exhausted. We do NOT escalate to an anonymous-token
@@ -1169,8 +1241,8 @@ export async function fetchUserPublicPlaylists(
     process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET,
   );
   const hint = isAppTokenConfigured
-    ? `App-token, spclient profile, and spclient playlists subroute all failed (attempted=${JSON.stringify(attempted)}).`
-    : `App-token fallback is not configured (SPOTIFY_CLIENT_SECRET is unset); spclient fallbacks also failed (attempted=${JSON.stringify(attempted)}).`;
+    ? `App-token, spclient profile, spclient playlists subroute, and search-API enumeration all failed (attempted=${JSON.stringify(attempted)}).`
+    : `App-token fallback is not configured (SPOTIFY_CLIENT_SECRET is unset); spclient + search fallbacks also failed (attempted=${JSON.stringify(attempted)}).`;
   throw firstTierError
     ? new SpotifyError(
         firstTierError.status,
@@ -1593,6 +1665,178 @@ async function fetchUserPublicPlaylistsWithSpclientPlaylists(
   }
 
   return { user, playlists, truncated };
+}
+
+/**
+ * Tier 5: Spotify catalog search (`/v1/search?type=playlist`) with the
+ * Client-Credentials app token. The catalog is indexed by playlist
+ * content/metadata, not by owner — so we issue queries built from the
+ * watched user's `displayName` and post-filter results to those whose
+ * `owner.id` exactly matches `spotifyUserId`.
+ *
+ * Why this finds anything at all: Spotify's catalog search returns
+ * public playlists ranked by popularity + relevance. Most users with
+ * any reasonably-sized public playlist appear in their own search
+ * results; once you find one, the result item carries `owner.id` so
+ * the filter is reliable.
+ *
+ * Why this is partial: Spotify ranks by global popularity, not by
+ * owner. A user with no popular playlists may yield zero matches. We
+ * report what we find and mark `truncated: true` if any query came
+ * back full (50 items) — that means there are likely more matches
+ * past offset 50 we didn't paginate into.
+ *
+ * Returns:
+ *   - `null` if `displayName` is missing/too-short/not-useful, or if
+ *     the app token is unavailable, or if a 429 is encountered (don't
+ *     extend the cooldown).
+ *   - `{ playlists: [], truncated: false }` if the queries fired but
+ *     produced zero matches (caller will treat as "exhausted").
+ *   - `{ playlists, truncated }` otherwise.
+ *
+ * Rate-limit budget: at most 3 search calls per invocation, all on
+ * the app-token bucket (separate from the user-OAuth bucket used by
+ * Tiers 1, 3, 4). Each call goes through `spotifyFetch` so the
+ * rolling-window cap and persisted cooldown both apply.
+ */
+async function fetchUserPlaylistsViaSearch(
+  spotifyUserId: string,
+  displayName: string | null | undefined,
+): Promise<{
+  playlists: SpotifyUserPlaylistItem[];
+  truncated: boolean;
+} | null> {
+  // No useful query without a name. Single-character names are too
+  // ambiguous to be productive (every search returns thousands of
+  // global hits with virtually no chance of an owner-id match).
+  const nameRaw = (displayName ?? "").trim();
+  if (nameRaw.length < 2) return null;
+
+  const tok = await getAppToken();
+  if (!tok) return null;
+
+  const lowerSpotifyId = spotifyUserId.toLowerCase();
+
+  // Build up to 3 distinct queries. Order matters: the bare-name
+  // query is highest-relevance for most users; the "{name} playlist"
+  // and "by {name}" variants exist as fallbacks when the bare name
+  // returns generic global hits without owner-matches.
+  const queries: string[] = [nameRaw];
+  if (nameRaw.length >= 3) queries.push(`${nameRaw} playlist`);
+  // Only fire the third variant if the first two yielded thin results.
+  // We check after each call; the third query is appended dynamically
+  // below.
+
+  // Spotify search response shape (trimmed).
+  interface SearchPlaylistOwner {
+    id?: string;
+    display_name?: string;
+  }
+  interface SearchPlaylistItem {
+    id?: string;
+    name?: string;
+    images?: SpotifyImage[];
+    owner?: SearchPlaylistOwner;
+    // Spotify has been observed to occasionally include `null` items in
+    // playlist search results when the indexed playlist is later
+    // deleted — defensively skip these.
+  }
+  interface SearchResponse {
+    playlists?: {
+      items?: Array<SearchPlaylistItem | null>;
+      total?: number;
+      limit?: number;
+    };
+  }
+
+  const seen = new Set<string>();
+  const out: SpotifyUserPlaylistItem[] = [];
+  let totalCandidates = 0;
+  let anyQueryFull = false;
+
+  // Hoist the loop so we can decide whether to fire the 3rd "by {name}"
+  // variant after the first two have run.
+  for (let qi = 0; qi < 3; qi++) {
+    if (qi >= queries.length) {
+      if (qi === 2 && out.length < 5 && nameRaw.length >= 3) {
+        // Only escalate to the third variant if results are thin.
+        queries.push(`by ${nameRaw}`);
+      } else {
+        break;
+      }
+    }
+    const q = queries[qi];
+
+    let res: SpotifyFetchResultLike;
+    try {
+      res = await spotifyFetch(
+        `${API}/search?q=${encodeURIComponent(q)}&type=playlist&limit=50&offset=0`,
+        { headers: { Authorization: `Bearer ${tok}` } },
+      );
+    } catch (e) {
+      if (e instanceof SpotifyRateLimitError) return null;
+      throw e;
+    }
+
+    if (!res.ok) {
+      // Search is on the app-token bucket — a 401 here is unexpected
+      // (token may have expired between getAppToken and the call); a
+      // 429 is fatal. For everything else, just skip this query and
+      // move on.
+      if (res.status === 429) return null;
+      continue;
+    }
+
+    let body: SearchResponse;
+    try {
+      body = await res.json<SearchResponse>();
+    } catch {
+      continue;
+    }
+
+    const items = Array.isArray(body?.playlists?.items)
+      ? body.playlists!.items!
+      : [];
+    totalCandidates += items.length;
+    if (items.length >= 50) anyQueryFull = true;
+
+    for (const p of items) {
+      if (!p) continue; // null entries (deleted playlists) are skipped
+      if (!p.id) continue;
+      const ownerIdRaw = p.owner?.id;
+      if (typeof ownerIdRaw !== "string") continue;
+      // Owner.id is canonical (lowercase) on Spotify but be defensive
+      // and case-insensitive — some legacy IDs are mixed-case.
+      if (ownerIdRaw.toLowerCase() !== lowerSpotifyId) continue;
+
+      if (seen.has(p.id)) continue;
+      seen.add(p.id);
+
+      out.push({
+        id: p.id,
+        name: typeof p.name === "string" && p.name.length > 0 ? p.name : p.id,
+        images: Array.isArray(p.images)
+          ? p.images.filter(
+              (img): img is SpotifyImage =>
+                Boolean(img) && typeof img.url === "string",
+            )
+          : undefined,
+        owner: {
+          id: ownerIdRaw,
+          display_name: p.owner?.display_name,
+        },
+      });
+    }
+  }
+
+  console.warn(
+    `[fetchUserPlaylistsViaSearch] queries=${queries.length} candidates=${totalCandidates} owner-matches=${out.length} for ${spotifyUserId} displayName=${JSON.stringify(nameRaw)}`,
+  );
+
+  // truncated=true if any query returned a full page (50) — there
+  // could be more matches past offset 50 we didn't paginate into.
+  // This signals the cron rediscovery loop to keep retrying.
+  return { playlists: out, truncated: anyQueryFull };
 }
 
 // Local alias so we don't need to drag the full SpotifyFetchResult shape
