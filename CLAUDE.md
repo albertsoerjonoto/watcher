@@ -121,16 +121,36 @@ code" — stop at "I saw it work on https://playlistwatcher.vercel.app".
      -q '.statuses[0].state'
    ```
 
-9. **QA on production via Chrome MCP** — this is the loop's exit
-   condition. Don't trust "the build passed" as proof the feature
-   works; always navigate the live site:
+9. **QA on production** — this is the loop's exit condition. Don't
+   trust "the build passed" as proof the feature works.
+
+   **Default (cloud/mobile-friendly): headless Playwright.**
+   ```
+   npm run qa:prod                           # default URL
+   npm run qa:prod -- https://<preview>.vercel.app  # any deploy
+   ```
+   First run only: `npm run qa:prod:install` to fetch the chromium
+   binary. The script (`scripts/qa-prod.ts`) drives a real Chromium
+   against the URL, asserts dashboard + feed render correctly, and
+   checks console + network are clean. It needs `WATCHER_SESSION_COOKIE`
+   set to the value of the `spw_session` cookie from a logged-in
+   browser (DevTools → Application → Cookies); without it, it falls
+   back to a smoke test that only confirms the sign-in page renders.
+   Exits 0 on pass, 1 on fail with a diagnostic dump.
+
+   **Optional (desktop richer view): Chrome MCP.**
+   When you're at a desktop and want to actually look at screenshots,
+   poke the UI by hand, or debug something non-deterministic:
    - `tabs_context_mcp { createIfEmpty: true }` to get a tab
    - `navigate` to `https://playlistwatcher.vercel.app/<route>`
    - `screenshot` after a 3–4s wait for SWR to populate
    - `find` + `left_click` (or `javascript_tool` for DOM assertions)
-     to exercise interactions
    - `read_console_messages { onlyErrors: true }` to confirm clean
    - `read_network_requests { urlPattern: "/api/" }` to confirm 200s
+
+   For mobile/cloud sessions, always use `npm run qa:prod` — Chrome
+   MCP requires the local Chrome extension and isn't reachable from a
+   cloud sandbox.
 
 10. **Iterate.** If QA reveals a bug or the user reports something
     didn't land, go back to step 1 with a new branch. Don't try to fix
