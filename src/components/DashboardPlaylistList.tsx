@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSWRConfig } from "swr";
-import { AlertCircle, Check, RefreshCw } from "lucide-react";
+import { AlertCircle, Check, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
 import { PlaylistActions } from "./PlaylistActions";
 import { RetryButton } from "./RetryButton";
 import { SectionPicker, type Section } from "./SectionPicker";
@@ -835,12 +835,15 @@ function SectionHeader({
     <button
       type="button"
       onClick={onToggle}
+      aria-label={open ? "Collapse section" : "Expand section"}
       className="flex w-full items-center justify-between rounded px-2 py-0.5 text-left hover:bg-neutral-100 dark:hover:bg-neutral-900"
     >
       {header}
-      <span className="text-[10px] text-neutral-400">
-        {open ? "Hide" : "Show"}
-      </span>
+      {open ? (
+        <ChevronUp className="h-4 w-4 text-neutral-400" />
+      ) : (
+        <ChevronDown className="h-4 w-4 text-neutral-400" />
+      )}
     </button>
   );
 }
