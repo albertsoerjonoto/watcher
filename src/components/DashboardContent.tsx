@@ -4,12 +4,13 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import useSWR from "swr";
 import Link from "next/link";
-import { ArrowUpDown, Pencil, Plus } from "lucide-react";
+import { Pencil } from "lucide-react";
 import { AddPlaylistForm } from "./AddPlaylistForm";
 import { AddWatchedUserForm } from "./AddWatchedUserForm";
 import { InstallHint } from "./InstallHint";
 import { DashboardPlaylistList } from "./DashboardPlaylistList";
 import { DASHBOARD_KEY } from "./dashboard-keys";
+import { useSortModePreference } from "@/lib/sort-mode";
 import type { DashboardData } from "@/lib/dashboard-data";
 
 // Re-export so existing callers that imported DASHBOARD_KEY from
@@ -45,76 +46,36 @@ export function DashboardContent({ fallbackData }: Props) {
     cooldownSeconds,
   } = data!;
 
-  const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState(false);
   // "weekly" (default) = sort by added-this-week count desc; sections
   // with no weekly activity auto-collapse so the dashboard surfaces
   // what's moving this week. "manual" = the user's drag-and-drop order
-  // (Edit > Move ↑/↓), with all sections expanded.
-  const [sortMode, setSortMode] = useState<"weekly" | "manual">("weekly");
+  // (Edit > Move ↑/↓), with all sections expanded. Persisted in
+  // localStorage and toggled from Settings.
+  const [sortMode] = useSortModePreference();
 
-  // Add / Sort / Edit live in the global top nav (rendered by the
-  // root layout) via a portal slot, so they're visually adjacent to
-  // the Sync and Settings icons rather than redundant per-watched-user.
+  // Edit lives in the global top nav (rendered by the root layout)
+  // via a portal slot. Toggling Edit also surfaces the Add forms below
+  // — adding and editing are the same "modify your watchlist" mode.
   const [toolbarTarget, setToolbarTarget] = useState<HTMLElement | null>(null);
   useEffect(() => {
     setToolbarTarget(document.getElementById("dashboard-toolbar-slot"));
   }, []);
 
   const toolbar = (
-    <div className="flex items-center gap-4">
-      <button
-        type="button"
-        onClick={() => {
-          setShowAdd(!showAdd);
-          if (editing) setEditing(false);
-        }}
-        title={showAdd ? "Hide add form" : "Add playlist or watched user"}
-        aria-label="Add"
-        className={
-          showAdd
-            ? "text-spotify"
-            : "text-neutral-400 hover:text-black dark:hover:text-white"
-        }
-      >
-        <Plus className="h-5 w-5" />
-      </button>
-      <button
-        type="button"
-        onClick={() =>
-          setSortMode(sortMode === "weekly" ? "manual" : "weekly")
-        }
-        title={
-          sortMode === "manual"
-            ? "Currently in your manual order. Click to sort by adds-this-week."
-            : "Sorting by adds-this-week. Click to switch to your manual order."
-        }
-        aria-label="Toggle sort order"
-        className={
-          sortMode === "manual"
-            ? "text-spotify"
-            : "text-neutral-400 hover:text-black dark:hover:text-white"
-        }
-      >
-        <ArrowUpDown className="h-5 w-5" />
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          setEditing(!editing);
-          if (showAdd) setShowAdd(false);
-        }}
-        title={editing ? "Done editing" : "Edit playlists"}
-        aria-label="Edit"
-        className={
-          editing
-            ? "text-spotify"
-            : "text-neutral-400 hover:text-black dark:hover:text-white"
-        }
-      >
-        <Pencil className="h-5 w-5" />
-      </button>
-    </div>
+    <button
+      type="button"
+      onClick={() => setEditing(!editing)}
+      title={editing ? "Done editing" : "Edit playlists"}
+      aria-label="Edit"
+      className={
+        editing
+          ? "text-spotify"
+          : "text-neutral-400 hover:text-black dark:hover:text-white"
+      }
+    >
+      <Pencil className="h-5 w-5" />
+    </button>
   );
 
   return (
@@ -167,7 +128,7 @@ export function DashboardContent({ fallbackData }: Props) {
         </div>
       )}
 
-      {showAdd && (
+      {editing && (
         <div className="space-y-4 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
           <AddWatchedUserForm />
           <hr className="border-neutral-200 dark:border-neutral-800" />

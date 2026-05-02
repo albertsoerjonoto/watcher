@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { NotificationToggles } from "@/components/NotificationToggles";
 import { SectionNotifyToggles } from "@/components/SectionNotifyToggles";
 import { EnablePush } from "@/components/EnablePush";
+import { SortModeSetting } from "@/components/SortModeSetting";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +36,8 @@ export default async function SettingsPage() {
           </button>
         </form>
       </div>
+
+      <SortModeSetting />
 
       <div className="space-y-3 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
         <h2 className="font-medium">Push notifications</h2>
