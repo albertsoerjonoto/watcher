@@ -823,7 +823,7 @@ function SectionHeader({
 }) {
   const header = (
     <div className="flex items-center gap-2">
-      <span className="text-[11px] uppercase tracking-wide text-neutral-400">
+      <span className="text-[10px] text-neutral-400">
         {SECTION_LABELS[section]}
       </span>
       {section === "new" && count > 0 && (
@@ -832,7 +832,7 @@ function SectionHeader({
         </span>
       )}
       {(section === "main" || section === "other") && count > 0 && (
-        <span className="text-[10px] text-neutral-500">({count})</span>
+        <span className="text-[10px] text-neutral-400">({count})</span>
       )}
     </div>
   );
