@@ -29,7 +29,11 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
 import { pollPlaylist } from "@/lib/poll";
-import { getCooldownSeconds } from "@/lib/rate-limit";
+import {
+  getCooldownSeconds,
+  getRefreshBatchThrottleSeconds,
+  recordRefreshBatchStarted,
+} from "@/lib/rate-limit";
 import type { User } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
@@ -47,6 +51,19 @@ export async function POST(request: Request) {
     return NextResponse.json({
       skipped: "cooldown",
       cooldownSeconds: cooldown,
+      remaining,
+    });
+  }
+
+  // Cross-instance batch throttle. The "client loops until 0" pattern
+  // in the comment above is exactly the kind of fast-fire we need to
+  // serialize when 5 agents are all hitting it.
+  const throttleSeconds = await getRefreshBatchThrottleSeconds();
+  if (throttleSeconds > 0) {
+    const remaining = await countPending(user.id);
+    return NextResponse.json({
+      skipped: "throttled",
+      retryAfterSeconds: throttleSeconds,
       remaining,
     });
   }
@@ -77,6 +94,9 @@ export async function POST(request: Request) {
       results: [],
     });
   }
+
+  // Stamp before the first call so a concurrent caller bails.
+  await recordRefreshBatchStarted();
 
   let u: User = user;
   let hitRateLimit = false;

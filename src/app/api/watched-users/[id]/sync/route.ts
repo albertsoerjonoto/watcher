@@ -11,7 +11,11 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
-import { getCooldownSeconds } from "@/lib/rate-limit";
+import {
+  getCooldownSeconds,
+  getRefreshBatchThrottleSeconds,
+  recordRefreshBatchStarted,
+} from "@/lib/rate-limit";
 import { syncWatchedUser } from "@/lib/watched-user-sync";
 import { SpotifyError } from "@/lib/spotify";
 
@@ -34,6 +38,18 @@ export async function POST(
     });
   }
 
+  // Re-syncing a watched user fires ~10-15 Spotify calls. Same gate
+  // as /api/refresh / /api/cron/poll / /api/watched-users POST so 5
+  // agents racing tests can't aggregate-blow Spotify's bucket.
+  const throttleSeconds = await getRefreshBatchThrottleSeconds();
+  if (throttleSeconds > 0) {
+    return NextResponse.json({
+      ok: true,
+      skipped: "throttled",
+      retryAfterSeconds: throttleSeconds,
+    });
+  }
+
   const watchedUser = await prisma.watchedUser.findFirst({
     where: { id: params.id, userId: user.id },
   });
@@ -41,6 +57,8 @@ export async function POST(
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
 
+  // Stamp the batch BEFORE the first Spotify call.
+  await recordRefreshBatchStarted();
   try {
     const result = await syncWatchedUser(user, watchedUser.spotifyId);
     return NextResponse.json({
