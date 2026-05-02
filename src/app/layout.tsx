@@ -4,6 +4,7 @@ import Link from "next/link";
 import { LayoutDashboard, Newspaper, Settings as SettingsIcon } from "lucide-react";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { PerfTracker } from "@/components/PerfTracker";
+import { SWRProvider } from "@/components/SWRProvider";
 
 export const metadata: Metadata = {
   title: "Watcher",
@@ -25,6 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
+        <SWRProvider>
         <header className="border-b border-neutral-200 dark:border-neutral-800">
           <nav className="mx-auto flex max-w-3xl items-center gap-4 p-4 text-sm">
             <Link
@@ -61,6 +63,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </header>
         <main className="mx-auto max-w-3xl p-4">{children}</main>
         <PerfTracker />
+        </SWRProvider>
       </body>
     </html>
   );
