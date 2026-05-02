@@ -1,9 +1,10 @@
 import { getCurrentUser } from "@/lib/session";
-import { loadDashboardData } from "@/lib/dashboard-data";
 import { DashboardContent } from "@/components/DashboardContent";
 
 export const dynamic = "force-dynamic";
 
+// Thin shell: auth check only. Data is loaded client-side by
+// DashboardContent's SWR with the SWRProvider's localStorage cache.
 export default async function DashboardPage() {
   const user = await getCurrentUser();
   if (!user) {
@@ -23,10 +24,5 @@ export default async function DashboardPage() {
     );
   }
 
-  // Single fetch shared with /api/dashboard via loadDashboardData(). The
-  // SWR client in DashboardContent uses this object as fallbackData so
-  // first paint is SSR'd, then revalidates from /api/dashboard.
-  const fallbackData = await loadDashboardData(user);
-
-  return <DashboardContent fallbackData={fallbackData} />;
+  return <DashboardContent />;
 }

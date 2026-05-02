@@ -1,9 +1,13 @@
 import { getCurrentUser } from "@/lib/session";
-import { loadFeedData, parseFeedFilter } from "@/lib/feed-data";
+import { parseFeedFilter } from "@/lib/feed-data";
 import { FeedContent } from "@/components/FeedContent";
 
 export const dynamic = "force-dynamic";
 
+// Thin shell: auth check only. Data is loaded client-side by FeedContent's
+// SWR with the SWRProvider's localStorage cache, so the function returns
+// in ~100ms and the user never waits on a 1-2s SSR Prisma round-trip.
+// Repeat visits paint instantly from the localStorage cache.
 export default async function FeedPage({
   searchParams,
 }: {
@@ -20,11 +24,5 @@ export default async function FeedPage({
 
   const filter = parseFeedFilter(searchParams?.filter);
 
-  // SSR fallback shared with /api/feed via loadFeedData(). The SWR
-  // client in FeedContent uses this object as fallbackData so first
-  // paint is SSR'd, then revalidates from /api/feed. Repeat visits
-  // hit the SWRProvider's localStorage cache and skip the network.
-  const fallbackData = await loadFeedData(user, filter);
-
-  return <FeedContent filter={filter} fallbackData={fallbackData} />;
+  return <FeedContent filter={filter} />;
 }
