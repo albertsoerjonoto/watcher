@@ -16,10 +16,10 @@ are added. Filters out self-additions. PWA-first, deployed on Vercel.
 ## Commands
 
 - `npm run dev` — Start dev server
-- `npm run build` — Production build (runs prisma generate + db push + next build)
+- `npm run build` — Production build (`prisma generate && next build`). Does NOT run `prisma db push` — see "Schema migrations" below for why.
 - `npm run lint` — ESLint
 - `npm test` — Vitest (includes rate-limit guardrail)
-- `npm run db:push` — Push schema to DB
+- `npm run db:push` — Push schema to DB (manual; only when you have DIRECT_URL set locally)
 - `npm run db:seed` — Seed playlists from playlists.json
 - `npm run poll` — Manual poll (for local testing)
 
@@ -52,6 +52,164 @@ are added. Filters out self-additions. PWA-first, deployed on Vercel.
 - **Repo:** `albertsoerjonoto/watcher`
 - **Production URL:** `https://playlistwatcher.vercel.app`
 - **Vercel project:** `https://vercel.com/albertsoerjonotos-projects/watcher`
+
+---
+
+# Agent loop — autonomous develop → deploy → QA → iterate
+
+This repo expects Claude agents to ship features end-to-end without
+human intervention between code change and verified-on-prod. When a
+user asks for a feature, run the full loop. Don't stop at "I wrote the
+code" — stop at "I saw it work on https://playlistwatcher.vercel.app".
+
+## The loop
+
+1. **Branch.** Always start from latest main:
+   ```
+   git fetch origin main --quiet
+   git checkout -b claude/<short-slug> origin/main
+   ```
+   Never reuse a branch from a previous loop iteration. Worktree note:
+   the parent worktree owns `main`, so you cannot `git checkout main`
+   from the agent worktree — every change goes on a feature branch.
+
+2. **Implement.** Make the change. Run `npm test` and `npm run build`
+   locally. Both must be green before pushing.
+
+3. **Commit.** Use the GitHub noreply email and a Co-Authored-By
+   trailer:
+   ```
+   git -c user.email='29353764+albertsoerjonoto@users.noreply.github.com' \
+     commit -m "$(cat <<'EOF'
+   feat(area): one-line summary
+
+   Body explaining the why.
+
+   Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+   EOF
+   )"
+   ```
+
+4. **Push + PR.** `git push -u origin claude/<slug>`, then `gh pr create
+   --base main`. Title under 70 chars, body with Summary + Test plan
+   sections.
+
+5. **Review.** Run `/review` (or its checklist mentally) before merging.
+   Apply auto-fixes inline. Critical findings need a human in the loop;
+   informational ones get a follow-up commit.
+
+6. **Wait for the Vercel preview deploy** to go SUCCESS. Poll with:
+   ```
+   gh pr view <num> --json statusCheckRollup \
+     -q '.statusCheckRollup[] | select(.context=="Vercel") | .state'
+   ```
+   FAILURE means the build broke; pull the deploy URL from the same
+   query and inspect logs in Chrome before pushing a fix.
+
+7. **Merge via the API**, NOT `gh pr merge`. The CLI tries to checkout
+   main locally and fails because the parent worktree has it:
+   ```
+   gh api -X PUT "/repos/albertsoerjonoto/watcher/pulls/<num>/merge" \
+     -f merge_method=squash
+   gh api -X DELETE "/repos/albertsoerjonoto/watcher/git/refs/heads/<branch>"
+   ```
+
+8. **Wait for the production deploy** on the new main commit to go
+   SUCCESS:
+   ```
+   gh api "/repos/albertsoerjonoto/watcher/commits/main/status" \
+     -q '.statuses[0].state'
+   ```
+
+9. **QA on production via Chrome MCP** — this is the loop's exit
+   condition. Don't trust "the build passed" as proof the feature
+   works; always navigate the live site:
+   - `tabs_context_mcp { createIfEmpty: true }` to get a tab
+   - `navigate` to `https://playlistwatcher.vercel.app/<route>`
+   - `screenshot` after a 3–4s wait for SWR to populate
+   - `find` + `left_click` (or `javascript_tool` for DOM assertions)
+     to exercise interactions
+   - `read_console_messages { onlyErrors: true }` to confirm clean
+   - `read_network_requests { urlPattern: "/api/" }` to confirm 200s
+
+10. **Iterate.** If QA reveals a bug or the user reports something
+    didn't land, go back to step 1 with a new branch. Don't try to fix
+    in-place after merge — open a follow-up PR. Each iteration is
+    cheap; a bad rushed merge is expensive.
+
+## Things that bite agents
+
+- `gh pr merge` — fails with "main is already used by worktree". Use
+  the API call shown above.
+- `prisma db push` during build — fails with "Environment variable not
+  found: DATABASE_URL". Vercel's build env doesn't expose runtime env
+  vars by default. See "Schema migrations" below.
+- Local schema mismatch — the dev DB this agent connects to is NOT the
+  production DB. Don't be surprised if `prisma db push` against your
+  local `DATABASE_URL` shows orphan tables (`events`, `sessions`)
+  that aren't in the schema. Don't `--accept-data-loss` blind.
+- `package-lock.json` shows up modified after `npm install` — usually
+  a single dev-only line flip; revert it before staging unless deps
+  actually changed.
+
+---
+
+# Schema migrations — lazy runtime, not build-time
+
+`prisma db push` cannot run during the Vercel build (DATABASE_URL is
+runtime-only). Instead, additive migrations are applied lazily at
+runtime via a Prisma client extension in `src/lib/db.ts`.
+
+## How it works
+
+```ts
+async function applyMigrations() {
+  await prismaBase.$executeRawUnsafe(`
+    ALTER TABLE "User"
+      ADD COLUMN IF NOT EXISTS "..." ...;
+  `);
+}
+
+export const prisma = prismaBase.$extends({
+  query: {
+    user: {
+      async $allOperations({ args, query }) {
+        await ensureMigrations();
+        return query(args);
+      },
+    },
+  },
+});
+```
+
+The first `prisma.user.*` call after a cold start runs the ALTER (no-op
+once the column exists, thanks to `IF NOT EXISTS`). Subsequent calls
+in the same Lambda skip — the resolved promise is cached on
+`globalThis.watcherMigrations`.
+
+## Adding a column
+
+1. Edit `prisma/schema.prisma` — add the field with a `@default(...)`
+   so existing rows backfill cleanly.
+2. `npm run db:generate` to refresh the Prisma client types.
+3. Append the corresponding `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`
+   to `applyMigrations()` in `src/lib/db.ts`. Always idempotent.
+4. If the new column is on a model OTHER than `User`, extend the
+   `$extends` block to gate that model too — otherwise reads will hit
+   the missing column before the migration runs.
+5. Ship through the agent loop; the first request after deploy applies
+   the migration in <100ms.
+
+## What this approach does NOT support
+
+- Renaming columns (data loss). Add new + backfill + drop old in
+  separate deploys instead.
+- Dropping columns (data loss). Stop reading the column first, ship,
+  then drop manually via `db:push` from a machine with DIRECT_URL.
+- Type changes. Same dance as renames.
+
+For destructive changes, do them by hand from a machine that has the
+production DATABASE_URL, then update the schema to match.
 
 ---
 
