@@ -4,6 +4,7 @@ import Link from "next/link";
 import { LayoutDashboard, Newspaper, Settings as SettingsIcon } from "lucide-react";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { PerfTracker } from "@/components/PerfTracker";
+import { SWRegister } from "@/components/SWRegister";
 import { SWRProvider } from "@/components/SWRProvider";
 
 export const metadata: Metadata = {
@@ -63,6 +64,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </header>
         <main className="mx-auto max-w-3xl p-4">{children}</main>
         <PerfTracker />
+        <SWRegister />
         </SWRProvider>
       </body>
     </html>
