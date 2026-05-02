@@ -9,7 +9,7 @@ import { RetryButton } from "./RetryButton";
 import { SectionPicker, type Section } from "./SectionPicker";
 import { WatchedUserAvatar } from "./WatchedUserAvatar";
 import { DASHBOARD_KEY } from "./dashboard-keys";
-import { formatDateJakarta, formatDateTimeJakarta } from "@/lib/datetime";
+import { formatDateJakarta, formatRelativeJakarta } from "@/lib/datetime";
 import { MAX_MAIN_PER_WATCHED_USER } from "@/lib/stale";
 
 type SortMode = "weekly" | "manual";
@@ -903,12 +903,9 @@ function PlaylistRowItem({
                 +{weekCount} this week
               </span>
             )}
-            <span className="ml-auto shrink-0 text-[10px] text-neutral-400">
-              checked {formatDateTimeJakarta(p.lastCheckedAt)}
-            </span>
           </div>
           <div className="text-xs text-neutral-500 dark:text-neutral-400">
-            {p._count.tracks} songs
+            {p._count.tracks} songs · {formatRelativeJakarta(p.lastCheckedAt)}
             {p.status !== "active" && (
               <span className="ml-2 text-amber-600 dark:text-amber-400">
                 ({p.status})

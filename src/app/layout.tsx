@@ -30,7 +30,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               href="/"
               title="Dashboard"
               aria-label="Dashboard"
-              className="text-neutral-400 hover:text-black dark:hover:text-white"
+              className="text-neutral-600 hover:text-black dark:text-neutral-300 dark:hover:text-white"
             >
               <LayoutDashboard className="h-5 w-5" />
             </Link>
@@ -38,18 +38,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               href="/feed"
               title="Feed"
               aria-label="Feed"
-              className="text-neutral-400 hover:text-black dark:hover:text-white"
+              className="text-neutral-600 hover:text-black dark:text-neutral-300 dark:hover:text-white"
             >
               <Newspaper className="h-5 w-5" />
             </Link>
             <div className="ml-auto flex items-center gap-4">
-              <AutoRefresh />
-              <div id="dashboard-toolbar-slot" className="contents" />
+              <div className="flex items-center gap-3 rounded border border-neutral-200 px-2 py-1 dark:border-neutral-800">
+                <AutoRefresh />
+                <div id="dashboard-toolbar-slot" className="contents" />
+              </div>
               <Link
                 href="/settings"
                 title="Settings"
                 aria-label="Settings"
-                className="text-neutral-400 hover:text-black dark:hover:text-white"
+                className="text-neutral-600 hover:text-black dark:text-neutral-300 dark:hover:text-white"
               >
                 <SettingsIcon className="h-5 w-5" />
               </Link>
