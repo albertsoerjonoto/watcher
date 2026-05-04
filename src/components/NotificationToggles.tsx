@@ -22,6 +22,7 @@ interface PlaylistRow {
   section: Section;
   sortOrder: number;
   weekCount: number;
+  latestAddedAt: string | null;
 }
 
 interface WatchedUserRow {
@@ -97,11 +98,19 @@ export function NotificationToggles({ watchedUsers, playlists }: Props) {
   }
 
   const grouped = useMemo(() => {
-    const byWeekly = (a: PlaylistRow, b: PlaylistRow) =>
-      b.weekCount - a.weekCount || a.sortOrder - b.sortOrder;
+    // Sort by latest track addedAt desc — playlists with the most
+    // recent additions float to the top. Empty string sorts below any
+    // ISO 8601 timestamp, so playlists with no tracks sink to the
+    // bottom. Tiebreak on the user's manual sortOrder.
+    const byLatest = (a: PlaylistRow, b: PlaylistRow) => {
+      const ta = a.latestAddedAt ?? "";
+      const tb = b.latestAddedAt ?? "";
+      if (tb !== ta) return tb > ta ? 1 : -1;
+      return a.sortOrder - b.sortOrder;
+    };
     const byManual = (a: PlaylistRow, b: PlaylistRow) =>
       a.sortOrder - b.sortOrder;
-    const sortFn = sortMode === "weekly" ? byWeekly : byManual;
+    const sortFn = sortMode === "weekly" ? byLatest : byManual;
 
     const out = new Map<string, Map<Section, PlaylistRow[]>>();
     for (const p of state) {

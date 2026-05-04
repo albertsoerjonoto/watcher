@@ -16,6 +16,10 @@ export interface SettingsPlaylistRow {
   section: "main" | "new" | "other";
   sortOrder: number;
   weekCount: number;
+  // Most recent addedAt (ISO 8601) across all tracks in this playlist.
+  // Drives the latest-additions sort in NotificationToggles. Null when
+  // the playlist has no tracks yet.
+  latestAddedAt: string | null;
 }
 
 export interface SettingsWatchedUserRow {
@@ -59,23 +63,39 @@ export async function loadSettingsData(
 
   if (!user) return null;
 
-  // Adds-this-week counts per playlist — feeds the "weekly" sort mode
-  // when the user picked it in the dashboard preference.
+  // Adds-this-week counts per playlist — used for the per-row badge
+  // and the inactive-row filter, NOT the sort key.
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const playlistIds = playlists.map((p) => p.id);
-  const weekCounts =
+  const [weekCounts, latestAdded] =
     playlistIds.length > 0
-      ? await prisma.track.groupBy({
-          by: ["playlistId"],
-          _count: { _all: true },
-          where: {
-            playlistId: { in: playlistIds },
-            addedAt: { gte: since },
-          },
-        })
-      : [];
+      ? await Promise.all([
+          prisma.track.groupBy({
+            by: ["playlistId"],
+            _count: { _all: true },
+            where: {
+              playlistId: { in: playlistIds },
+              addedAt: { gte: since },
+            },
+          }),
+          // Unwindowed max(addedAt) per playlist — feeds the latest-
+          // additions sort mode. Mirrors the parallel query in
+          // dashboard-data.ts so the two surfaces sort identically.
+          prisma.track.groupBy({
+            by: ["playlistId"],
+            _max: { addedAt: true },
+            where: { playlistId: { in: playlistIds } },
+          }),
+        ])
+      : [[], []];
   const weekByPlaylist = new Map<string, number>();
   for (const w of weekCounts) weekByPlaylist.set(w.playlistId, w._count._all);
+  const latestAddedAtByPlaylist = new Map<string, string>();
+  for (const r of latestAdded) {
+    if (r._max.addedAt) {
+      latestAddedAtByPlaylist.set(r.playlistId, r._max.addedAt.toISOString());
+    }
+  }
 
   return {
     user: {
@@ -101,6 +121,7 @@ export async function loadSettingsData(
       section: (p.section as "main" | "new" | "other") ?? "main",
       sortOrder: p.sortOrder,
       weekCount: weekByPlaylist.get(p.id) ?? 0,
+      latestAddedAt: latestAddedAtByPlaylist.get(p.id) ?? null,
     })),
   };
 }

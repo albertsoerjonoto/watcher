@@ -40,6 +40,7 @@ export function DashboardContent({ fallbackData }: Props) {
     playlists,
     recentByPlaylist,
     weekByPlaylist,
+    latestAddedAtByPlaylist,
     errorByPlaylist,
     hasPushSub,
     needsReauth,
@@ -47,11 +48,12 @@ export function DashboardContent({ fallbackData }: Props) {
   } = data!;
 
   const [editing, setEditing] = useState(false);
-  // "weekly" (default) = sort by added-this-week count desc; sections
-  // with no weekly activity auto-collapse so the dashboard surfaces
-  // what's moving this week. "manual" = the user's drag-and-drop order
-  // (Edit > Move ↑/↓), with all sections expanded. Persisted in
-  // localStorage and toggled from Settings.
+  // "weekly" (default) = sort by latest track addedAt desc, so playlists
+  // with the most recent additions surface first; sections with no
+  // adds-this-week still auto-collapse so the dashboard hides quiet
+  // surfaces. "manual" = the user's drag-and-drop order (Edit > Move
+  // ↑/↓), with all sections expanded. Persisted in localStorage and
+  // toggled from Settings.
   const [sortMode] = useSortModePreference();
 
   // Edit lives in the global top nav (rendered by the root layout)
@@ -141,6 +143,7 @@ export function DashboardContent({ fallbackData }: Props) {
         playlists={playlists}
         recentByPlaylist={recentByPlaylist}
         weekByPlaylist={weekByPlaylist}
+        latestAddedAtByPlaylist={latestAddedAtByPlaylist}
         errorByPlaylist={errorByPlaylist}
         editing={editing}
         sortMode={sortMode}

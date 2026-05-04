@@ -15,9 +15,10 @@ export function SortModeSetting() {
     <div className="space-y-3 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
       <h2 className="font-medium">Playlist sort order</h2>
       <p className="text-xs text-neutral-500 dark:text-neutral-400">
-        Adds this week surfaces what&apos;s moving and auto-collapses
-        inactive sections. Manual keeps your drag-and-drop order with
-        every section expanded.
+        Latest additions ranks each section by the most recently added
+        track and auto-collapses sections with no activity this week.
+        Manual keeps your drag-and-drop order with every section
+        expanded.
       </p>
       <div className="flex gap-2">
         <button
@@ -25,7 +26,7 @@ export function SortModeSetting() {
           onClick={() => setMode("weekly")}
           className={`${baseClass} ${mode === "weekly" ? activeClass : inactiveClass}`}
         >
-          Adds this week
+          Latest additions
         </button>
         <button
           type="button"
