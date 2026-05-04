@@ -35,16 +35,23 @@ export function DashboardContent({ fallbackData }: Props) {
   });
 
   // data is always defined because of fallbackData.
+  //
+  // Defaults for record-shaped fields belt-and-suspender against a
+  // localStorage-cached response from a prior deploy that lacked a
+  // newer field — e.g. latestAddedAtByPlaylist was added in PR #99,
+  // and old caches without it crashed the sort comparator before the
+  // SWRProvider cache-version bump landed. STORAGE_KEY versioning is
+  // the primary defense; these defaults are the floor.
   const {
-    watchedUsers,
-    playlists,
-    recentByPlaylist,
-    weekByPlaylist,
-    latestAddedAtByPlaylist,
-    errorByPlaylist,
-    hasPushSub,
-    needsReauth,
-    cooldownSeconds,
+    watchedUsers = [],
+    playlists = [],
+    recentByPlaylist = {},
+    weekByPlaylist = {},
+    latestAddedAtByPlaylist = {},
+    errorByPlaylist = {},
+    hasPushSub = false,
+    needsReauth = false,
+    cooldownSeconds = 0,
   } = data!;
 
   const [editing, setEditing] = useState(false);
