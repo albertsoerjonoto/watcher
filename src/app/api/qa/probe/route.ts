@@ -18,6 +18,13 @@ const RATE_WINDOW_MS = 5_000;
 
 const STALE_CRON_MS = 30 * 60 * 60 * 1000; // 30h (cron runs daily on Hobby)
 const STALE_SYNC_MS = 14 * 24 * 60 * 60 * 1000; // 14d
+// Orphan = playlist row with watchedUserId IS NULL. POST /api/playlists
+// creates rows with watchedUserId=null and the post-poll attach hook in
+// src/lib/poll.ts:265 wires it up on first successful poll. A row that
+// stays orphaned past STUCK_ORPHAN_MS is a sign the retry/drain path is
+// broken — exactly the failure mode that bit us when AddPlaylistForm was
+// fire-and-forget on /api/playlists/:id/retry.
+const STUCK_ORPHAN_MS = 30 * 60 * 1000; // 30 min
 
 type CheckStatus = "ok" | "warn" | "fail";
 interface Check {
@@ -220,6 +227,41 @@ export async function GET() {
   } catch (e) {
     checks.push({
       name: "watchedUser.syncFreshness",
+      status: "fail",
+      detail: `query failed: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 8) Orphan playlists. A row with watchedUserId=null and
+  // lastCheckedAt=null is "Pending" by design; the dashboard's
+  // auto-drain effect plus AutoRefresh should attach it within seconds.
+  // A row stuck >STUCK_ORPHAN_MS without being polled means the drain
+  // path is broken (or rate-limited far longer than the cooldown
+  // suggests). Recently-created orphans are not a fail — they're the
+  // expected transient state right after Add.
+  try {
+    const stuckCutoff = new Date(now - STUCK_ORPHAN_MS);
+    const [totalOrphans, stuckOrphans] = await Promise.all([
+      prisma.playlist.count({ where: { watchedUserId: null } }),
+      prisma.playlist.count({
+        where: {
+          watchedUserId: null,
+          createdAt: { lt: stuckCutoff },
+        },
+      }),
+    ]);
+    let status: CheckStatus = "ok";
+    let detail = `${totalOrphans} orphan playlist(s)`;
+    if (stuckOrphans > 0) {
+      status = "warn";
+      detail = `${totalOrphans} orphan(s); ${stuckOrphans} stuck >${Math.round(STUCK_ORPHAN_MS / 60000)}min`;
+    } else if (totalOrphans > 0) {
+      detail = `${totalOrphans} transient orphan(s) (recently added)`;
+    }
+    checks.push({ name: "playlists.orphanAttach", status, detail });
+  } catch (e) {
+    checks.push({
+      name: "playlists.orphanAttach",
       status: "fail",
       detail: `query failed: ${e instanceof Error ? e.message : String(e)}`,
     });

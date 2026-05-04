@@ -9,6 +9,7 @@ import { RetryButton } from "./RetryButton";
 import { SectionPicker, type Section } from "./SectionPicker";
 import { WatchedUserAvatar } from "./WatchedUserAvatar";
 import { DASHBOARD_KEY } from "./dashboard-keys";
+import { drainPendingPolls } from "./drain-pending";
 import {
   formatDateJakarta,
   formatRelativeJakarta,
@@ -67,60 +68,6 @@ function getRenderOrder(buckets: SectionBuckets): Section[] {
     : ["main", "other"];
 }
 
-// Drain the never-polled-yet queue by repeatedly calling
-// /api/playlists/poll-pending until `remaining` is 0. On a 429
-// cooldown, sleep for the reported seconds (capped at 30s per wait so
-// the UI stays interactive) and retry. Caller passes a status callback
-// so the syncMessage can show progress in real time.
-async function drainPendingPolls(
-  onStatus: (status: string) => void,
-): Promise<void> {
-  const MAX_LOOPS = 60; // ~5 min at 5/loop is plenty for typical 50-playlist syncs.
-  let polledTotal = 0;
-  for (let loop = 0; loop < MAX_LOOPS; loop++) {
-    const res = await fetch("/api/playlists/poll-pending", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ limit: 5 }),
-    });
-    const body = (await res.json().catch(() => ({}))) as {
-      polled?: number;
-      remaining?: number;
-      hitRateLimit?: boolean;
-      skipped?: string;
-      cooldownSeconds?: number;
-    };
-    if (body.skipped === "cooldown") {
-      const wait = Math.min(body.cooldownSeconds ?? 5, 30);
-      onStatus(
-        `rate-limited, waiting ${wait}s (${body.remaining ?? "?"} pending)`,
-      );
-      await sleep(wait * 1000);
-      continue;
-    }
-    polledTotal += body.polled ?? 0;
-    const remaining = body.remaining ?? 0;
-    if (remaining === 0) {
-      onStatus(`polled ${polledTotal}`);
-      return;
-    }
-    onStatus(`polled ${polledTotal}, ${remaining} pending`);
-    if (body.hitRateLimit) {
-      // Brief pause to let the rate limit window slide.
-      await sleep(5000);
-    } else {
-      // Brief pause between batches even on success — keeps us under
-      // the rolling-30s budget when there are many playlists.
-      await sleep(800);
-    }
-  }
-  onStatus(`gave up after ${MAX_LOOPS} loops`);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 export function DashboardPlaylistList({
   watchedUsers: initialWatchedUsers,
   playlists: initialPlaylists,
@@ -131,6 +78,7 @@ export function DashboardPlaylistList({
   editing = false,
   sortMode = "weekly",
 }: Props) {
+  const { mutate } = useSWRConfig();
   const [playlists, setPlaylists] = useState(initialPlaylists);
   // Mirror of playlists state for reading inside async queue callbacks
   // without abusing setPlaylists as a read-only side channel.
@@ -154,6 +102,36 @@ export function DashboardPlaylistList({
     }
     prevIdsRef.current = newIds;
   }, [initialPlaylists]);
+
+  // Auto-drain orphans on mount. An orphan is a playlist with
+  // watchedUserId=null — created by POST /api/playlists, which
+  // intentionally skips the Spotify call on the hot path. The post-poll
+  // attach hook in src/lib/poll.ts:265 wires up watchedUserId once the
+  // owner is known, but only AFTER pollPlaylist runs.
+  //
+  // The /retry call AddPlaylistForm fires can return 429 (cooldown OR
+  // batch throttle) and silently leave the row orphaned. Without this
+  // effect the row stays in "Pending" until the next AutoRefresh fire
+  // catches a clean window — which on a quiet tab can be hours.
+  //
+  // Run once per mount when orphans exist. drainPendingPolls is itself
+  // gated by cooldown + throttle on the server, so this is safe to call
+  // even when AutoRefresh is also running. The ref guard prevents
+  // re-firing when SWR revalidates the playlist list during the drain.
+  const drainStartedRef = useRef(false);
+  useEffect(() => {
+    if (drainStartedRef.current) return;
+    const hasOrphans = initialPlaylists.some((p) => !p.watchedUserId);
+    if (!hasOrphans) return;
+    drainStartedRef.current = true;
+    drainPendingPolls()
+      .then(() => mutate(DASHBOARD_KEY))
+      .catch(() => {
+        // Errors are swallowed — drain is best-effort. A failure here
+        // doesn't break the dashboard, the orphan just stays visible
+        // in "Pending" until the next AutoRefresh tick or user retry.
+      });
+  }, [initialPlaylists, mutate]);
 
   // Group playlists by (watchedUserId, section). Orphans (watchedUserId
   // null) collect under the "_orphan" pseudo-key — these are stub rows
