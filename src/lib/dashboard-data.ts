@@ -54,7 +54,15 @@ export interface DashboardData {
   watchedUsers: WatchedUserRow[];
   playlists: PlaylistRow[];
   recentByPlaylist: Record<string, TrackRow[]>;
+  // Adds-this-week count per playlist. Drives the "+N this week" badge,
+  // the section auto-collapse (no week activity = collapsed), and the
+  // "+ Show N inactive" row filter. Independent of the sort key.
   weekByPlaylist: Record<string, number>;
+  // Most recent addedAt timestamp (ISO 8601) per playlist, across all
+  // time. Drives the default sort order — playlists with the most
+  // recent additions surface first. Missing entry = playlist has no
+  // tracks yet (sinks to the bottom of its section).
+  latestAddedAtByPlaylist: Record<string, string>;
   errorByPlaylist: Record<string, string>;
   hasPushSub: boolean;
   needsReauth: boolean;
@@ -94,7 +102,7 @@ export async function loadDashboardData(
 
   const playlistIds = playlists.map((p) => p.id);
 
-  const [weekCounts, lastErrors, allRecentTracks, hasPushSub] =
+  const [weekCounts, latestAdded, lastErrors, allRecentTracks, hasPushSub] =
     await Promise.all([
       prisma.track.groupBy({
         by: ["playlistId"],
@@ -103,6 +111,14 @@ export async function loadDashboardData(
           playlistId: { in: playlistIds },
           addedAt: { gte: since },
         },
+      }),
+      // Unwindowed max(addedAt) per playlist — feeds the latest-additions
+      // sort. A separate aggregate from weekCounts because that one is
+      // bounded to the last 7 days, and "latest" is an all-time signal.
+      prisma.track.groupBy({
+        by: ["playlistId"],
+        _max: { addedAt: true },
+        where: { playlistId: { in: playlistIds } },
       }),
       prisma.pollLog.findMany({
         where: { playlistId: { in: playlistIds } },
@@ -202,6 +218,13 @@ export async function loadDashboardData(
   const weekByPlaylist: Record<string, number> = {};
   for (const r of weekCounts) weekByPlaylist[r.playlistId] = r._count._all;
 
+  const latestAddedAtByPlaylist: Record<string, string> = {};
+  for (const r of latestAdded) {
+    if (r._max.addedAt) {
+      latestAddedAtByPlaylist[r.playlistId] = r._max.addedAt.toISOString();
+    }
+  }
+
   const errorByPlaylist: Record<string, string> = {};
   for (const r of lastErrors) {
     if (r.playlistId && r.error) errorByPlaylist[r.playlistId] = r.error;
@@ -222,6 +245,7 @@ export async function loadDashboardData(
     playlists: playlistRows,
     recentByPlaylist,
     weekByPlaylist,
+    latestAddedAtByPlaylist,
     errorByPlaylist,
     hasPushSub,
     needsReauth,

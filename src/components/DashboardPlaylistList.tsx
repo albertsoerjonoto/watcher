@@ -38,6 +38,7 @@ interface Props {
   playlists: PlaylistRow[];
   recentByPlaylist: Record<string, TrackRow[]>;
   weekByPlaylist: Record<string, number>;
+  latestAddedAtByPlaylist: Record<string, string>;
   errorByPlaylist: Record<string, string>;
   editing?: boolean;
   sortMode?: SortMode;
@@ -125,6 +126,7 @@ export function DashboardPlaylistList({
   playlists: initialPlaylists,
   recentByPlaylist,
   weekByPlaylist,
+  latestAddedAtByPlaylist,
   errorByPlaylist,
   editing = false,
   sortMode = "weekly",
@@ -159,10 +161,12 @@ export function DashboardPlaylistList({
   // don't know their owner.
   //
   // sortMode applies INSIDE each section bucket — Main, New, and Other
-  // are sorted independently. "weekly" (default) sorts by
-  // adds-this-week count desc, with manual sortOrder as a stable
-  // tiebreaker. "manual" preserves the user's drag-and-drop ordering
-  // (server-provided sortOrder + insertion order).
+  // are sorted independently. "weekly" (default) sorts by latest track
+  // addedAt desc, so the playlist with the most recent addition is on
+  // top, with manual sortOrder as a stable tiebreaker. Playlists with
+  // no tracks at all sink to the bottom. "manual" preserves the user's
+  // drag-and-drop ordering (server-provided sortOrder + insertion
+  // order).
   const grouped = useMemo(() => {
     const map = new Map<string, SectionBuckets>();
     const ensure = (key: string): SectionBuckets => {
@@ -184,12 +188,15 @@ export function DashboardPlaylistList({
         for (const sec of SECTION_ORDER) {
           // Capture original index BEFORE sorting so the tiebreaker
           // preserves the user's manual order for playlists with the
-          // same weekly-add count.
+          // same latest-addedAt timestamp (rare but possible — e.g.
+          // sibling playlists seeded in the same poll).
           const indexed = buckets[sec].map((p, i) => ({ p, i }));
           indexed.sort((a, b) => {
-            const wa = weekByPlaylist[a.p.id] ?? 0;
-            const wb = weekByPlaylist[b.p.id] ?? 0;
-            if (wb !== wa) return wb - wa; // desc
+            // Empty string sorts below any ISO 8601 timestamp, so
+            // playlists with no tracks sink to the bottom.
+            const ta = latestAddedAtByPlaylist[a.p.id] ?? "";
+            const tb = latestAddedAtByPlaylist[b.p.id] ?? "";
+            if (tb !== ta) return tb > ta ? 1 : -1; // desc by ISO string
             return a.i - b.i;
           });
           buckets[sec] = indexed.map(({ p }) => p);
@@ -197,7 +204,7 @@ export function DashboardPlaylistList({
       }
     }
     return map;
-  }, [playlists, sortMode, weekByPlaylist]);
+  }, [playlists, sortMode, latestAddedAtByPlaylist]);
 
   // Live main counts per watchedUserId, derived from current state so
   // SectionPicker reflects optimistic moves. Falls back to server-
