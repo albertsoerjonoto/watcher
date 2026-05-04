@@ -2,7 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
 import { notFound } from "next/navigation";
-import { formatDateJakarta } from "@/lib/datetime";
+import { formatDateJakarta, formatTimeJakarta } from "@/lib/datetime";
 
 export const dynamic = "force-dynamic";
 
@@ -120,8 +120,9 @@ export default async function PlaylistPage({
                   {t.album ? ` · ${t.album}` : ""}
                 </div>
               </div>
-              <time className="shrink-0 text-xs text-neutral-500">
+              <time className="shrink-0 text-xs text-neutral-500 tabular-nums">
                 {formatDateJakarta(t.addedAt)}
+                <span className="ml-2">{formatTimeJakarta(t.addedAt)}</span>
               </time>
             </li>
           );
