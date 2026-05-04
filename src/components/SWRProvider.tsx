@@ -17,8 +17,20 @@ import { SWRConfig, type Cache } from "swr";
 // All localStorage access is try/catch'd. If storage is unavailable
 // (private browsing, full quota, embedded view), we silently fall
 // back to memory-only — SWR still works, just doesn't survive reload.
+//
+// CACHE VERSION DISCIPLINE: STORAGE_KEY embeds a version suffix. Bump
+// it whenever any /api/* response shape changes in a non-additive way
+// (renamed/removed field, narrower type, struct→array reshape) OR
+// when a consumer starts reading a field that didn't exist before
+// without a defensive default. Old cached entries that lack the new
+// field would otherwise hydrate into the page and crash on first
+// access — exactly the regression that drove v1→v2 (PR added
+// latestAddedAtByPlaylist; old caches missing it crashed the dashboard
+// sort comparator). Old keys are also explicitly purged below to
+// avoid leaving dead localStorage entries forever.
 
-const STORAGE_KEY = "watcher:swr-cache";
+const STORAGE_KEY = "watcher:swr-cache-v2";
+const STALE_STORAGE_KEYS = ["watcher:swr-cache"];
 const SAVE_DEBOUNCE_MS = 250;
 
 function makeProvider(): Cache {
@@ -28,6 +40,15 @@ function makeProvider(): Cache {
   // per-key here.
   const map = new Map<string, unknown>();
   if (typeof window === "undefined") return map as unknown as Cache;
+
+  // Purge any stale cache versions before hydrating the current one.
+  // Without this, old keys would sit in localStorage forever after a
+  // version bump, wasting quota on data nothing reads.
+  try {
+    for (const k of STALE_STORAGE_KEYS) window.localStorage.removeItem(k);
+  } catch {
+    // localStorage unavailable — fine, nothing to purge.
+  }
 
   // Hydrate from localStorage.
   try {
